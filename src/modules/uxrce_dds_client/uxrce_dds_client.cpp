@@ -639,6 +639,16 @@ void UxrceddsClient::run()
 		_last_payload_tx_rate = 0;
 		_subs->reset();
 		_timesync.reset_filter();
+
+		// Reopen the transport on every reconnect. A serial link that desynced
+		// while the agent was gone (docker restart, or companion CPU saturation
+		// at high baud) is only recovered by closing and re-initializing the
+		// UART: deinit() frees the transport and sets _comm = nullptr, so the
+		// outer loop's `while (!_comm) init()` reopens a fresh fd. Without this
+		// the client keeps re-pinging a corrupted stream forever and stays
+		// "disconnected" until an FC power-cycle.
+		_connected = false;
+		deinit();
 	}
 }
 
