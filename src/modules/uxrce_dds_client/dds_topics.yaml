@@ -111,6 +111,9 @@ publications:
   - topic: /fmu/out/param_bridge_response
     type: px4_msgs::msg::ParamBridgeResponse
 
+  - topic: /fmu/out/log_download_response
+    type: px4_msgs::msg::LogDownloadResponse
+
 # Create uORB::Publication
 subscriptions:
   - topic: /fmu/in/register_ext_component_request
@@ -229,6 +232,9 @@ subscriptions:
 
   - topic: /fmu/in/param_bridge_request
     type: px4_msgs::msg::ParamBridgeRequest
+
+  - topic: /fmu/in/log_download_request
+    type: px4_msgs::msg::LogDownloadRequest
 
 # Create uORB::PublicationMulti
 subscriptions_multi:
