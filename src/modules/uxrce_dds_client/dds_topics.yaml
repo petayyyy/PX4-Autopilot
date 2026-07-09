@@ -74,6 +74,18 @@ publications:
   - topic: /fmu/out/vehicle_trajectory_waypoint_desired
     type: px4_msgs::msg::VehicleTrajectoryWaypoint
 
+  - topic: /fmu/out/param_bridge_response
+    type: px4_msgs::msg::ParamBridgeResponse
+
+  - topic: /fmu/out/log_message
+    type: px4_msgs::msg::LogMessage
+
+  - topic: /fmu/out/input_rc
+    type: px4_msgs::msg::InputRc
+
+  - topic: /fmu/out/ulog_stream
+    type: px4_msgs::msg::UlogStream
+
 # Create uORB::Publication
 subscriptions:
   - topic: /fmu/in/register_ext_component_request
@@ -162,6 +174,12 @@ subscriptions:
 
   - topic: /fmu/in/aux_global_position
     type: px4_msgs::msg::VehicleGlobalPosition
+
+  - topic: /fmu/in/param_bridge_request
+    type: px4_msgs::msg::ParamBridgeRequest
+
+  - topic: /fmu/in/ulog_stream_ack
+    type: px4_msgs::msg::UlogStreamAck
 
 # Create uORB::PublicationMulti
 subscriptions_multi:
