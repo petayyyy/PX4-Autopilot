@@ -1,0 +1,5 @@
+menuconfig MODULES_LOG_DOWNLOAD_BRIDGE
+	bool "log_download_bridge"
+	default n
+	---help---
+		Download the latest .ulg from SD over uXRCE-DDS (reliable pull by offset).

@@ -86,6 +86,9 @@ publications:
   - topic: /fmu/out/ulog_stream
     type: px4_msgs::msg::UlogStream
 
+  - topic: /fmu/out/log_download_response
+    type: px4_msgs::msg::LogDownloadResponse
+
 # Create uORB::Publication
 subscriptions:
   - topic: /fmu/in/register_ext_component_request
@@ -180,6 +183,9 @@ subscriptions:
 
   - topic: /fmu/in/ulog_stream_ack
     type: px4_msgs::msg::UlogStreamAck
+
+  - topic: /fmu/in/log_download_request
+    type: px4_msgs::msg::LogDownloadRequest
 
 # Create uORB::PublicationMulti
 subscriptions_multi:

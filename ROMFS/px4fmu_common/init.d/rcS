@@ -585,6 +585,11 @@ fi
 param_dds_bridge start
 
 #
+# SD log download over uXRCE-DDS.
+#
+log_download_bridge start
+
+#
 # Unset all script parameters to free RAM.
 #
 unset R

@@ -157,6 +157,8 @@ set(msg_files
 	OrbTestMedium.msg
 	ParamBridgeRequest.msg
 	ParamBridgeResponse.msg
+	LogDownloadRequest.msg
+	LogDownloadResponse.msg
 	ParameterResetRequest.msg
 	ParameterSetUsedRequest.msg
 	ParameterSetValueRequest.msg
