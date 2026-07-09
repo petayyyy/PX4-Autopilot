@@ -655,6 +655,11 @@ else
 fi
 
 #
+# Companion parameter bridge over uXRCE-DDS (set/get params by name).
+#
+param_dds_bridge start
+
+#
 # Unset all script parameters to free RAM.
 #
 unset R

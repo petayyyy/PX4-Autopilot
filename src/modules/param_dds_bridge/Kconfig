@@ -1,0 +1,5 @@
+menuconfig MODULES_PARAM_DDS_BRIDGE
+	bool "param_dds_bridge"
+	default n
+	---help---
+		Set/get PX4 parameters by name over uXRCE-DDS (param_bridge_request/response).
