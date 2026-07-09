@@ -45,6 +45,7 @@ struct SendSubscription {
 	const char* dds_type_name;
 	uint32_t topic_size;
 	UcdrSerializeMethod ucdr_serialize_method;
+	uint64_t publish_interval_ms; // per-topic poll interval; from optional yaml 'rate_limit' (Hz)
 };
 
 // Subscribers for messages to send
@@ -56,6 +57,7 @@ struct SendTopicsSubs {
 			  "@(pub['dds_type'])",
 			  ucdr_topic_size_@(pub['simple_base_type'])(),
 			  &ucdr_serialize_@(pub['simple_base_type']),
+			  static_cast<uint64_t>((@(pub.get('rate_limit', 0)) > 0) ? (1e3 / @(pub.get('rate_limit', 1e3))) : UXRCE_DEFAULT_POLL_RATE),
 			},
 @[    end for]@
 	};
@@ -73,7 +75,7 @@ void SendTopicsSubs::init() {
 	for (unsigned idx = 0; idx < sizeof(send_subscriptions)/sizeof(send_subscriptions[0]); ++idx) {
 		fds[idx].fd = orb_subscribe(send_subscriptions[idx].orb_meta);
 		fds[idx].events = POLLIN;
-		orb_set_interval(fds[idx].fd, UXRCE_DEFAULT_POLL_RATE);
+		orb_set_interval(fds[idx].fd, send_subscriptions[idx].publish_interval_ms);
 	}
 }
 
