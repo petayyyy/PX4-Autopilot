@@ -90,13 +90,13 @@ publications:
     type: px4_msgs::msg::ParameterUpdate
 
   - topic: /fmu/out/log_message
-     type: px4_msgs::msg::LogMessage
+    type: px4_msgs::msg::LogMessage
 
   - topic: /fmu/out/input_rc
-     type: px4_msgs::msg::InputRc
+    type: px4_msgs::msg::InputRc
 
   - topic: /fmu/out/ulog_stream
-     type: px4_msgs::msg::UlogStream
+    type: px4_msgs::msg::UlogStream
 
 #### For PID analizer — LEAN: comment out for flight (high-rate, no consumer in-flight);
 #### uncomment this whole block for a PID-tuning session.
