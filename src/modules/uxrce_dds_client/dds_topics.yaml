@@ -118,6 +118,9 @@ publications:
   - topic: /fmu/out/actuator_outputs
     type: px4_msgs::msg::ActuatorOutputs
 
+  - topic: /fmu/out/autotune_attitude_control_status
+    type: px4_msgs::msg::AutotuneAttitudeControlStatus
+
 # Create uORB::Publication
 subscriptions:
   - topic: /fmu/in/register_ext_component_request
