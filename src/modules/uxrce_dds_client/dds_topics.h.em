@@ -83,6 +83,13 @@ void SendTopicsSubs::reset() {
 	num_payload_sent = 0;
 	for (unsigned idx = 0; idx < sizeof(send_subscriptions)/sizeof(send_subscriptions[0]); ++idx) {
 		send_subscriptions[idx].data_writer = uxr_object_id(0, UXR_INVALID_ID);
+		// Release the orb subscription taken in init(). Without this, every reconnect
+		// (agent restart / UART desync) leaks one fd per send-topic because init()
+		// re-subscribes unconditionally on the next session — over many reconnects
+		// orb_subscribe() eventually fails and DDS telemetry dies until an FC reboot.
+		// Backport of the v1.17.0 fix; init()/reset() are now balanced per session.
+		orb_unsubscribe(fds[idx].fd);
+		fds[idx].fd = -1;
 	}
 };
 
