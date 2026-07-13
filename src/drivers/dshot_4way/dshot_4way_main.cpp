@@ -1,0 +1,110 @@
+/****************************************************************************
+ * dshot_4way / dshot_4way_main.cpp
+ *
+ * nsh command that exposes the BLHeli/SiLabs bootloader on the DShot output
+ * pins over a serial port, so esc-configurator / BLHeliSuite can read & write
+ * ESC settings (e.g. Beacon Delay = Infinite).
+ *
+ * Usage:
+ *   dshot stop                     # release the DShot timer/pins first
+ *   dshot_4way start [device]      # default device: /dev/ttyACM0
+ *   ... connect esc-configurator to <device>, do the work, then in its UI
+ *       send "Exit interface" (esc4way exit) ...
+ *   dshot start                    # restore normal DShot output
+ *
+ * Props MUST be removed. See PORTING.md.
+ ****************************************************************************/
+
+#include <px4_platform_common/px4_config.h>
+#include <px4_platform_common/log.h>
+
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+/* C linkage to the ported Betaflight 4way interface (serial_4way.c). */
+extern "C" {
+	typedef struct serialPort_s {
+		int fd;
+	} serialPort_t;
+
+	uint8_t esc4wayInit(void);
+	void    esc4wayProcess(serialPort_t *mspPort);
+	void    esc4wayRelease(void);
+	int     dshot_4way_dump(int num_esc);
+	int     dshot_4way_probe(int num_esc);
+	int     dshot_4way_set_beacon(int esc_index, int value);
+}
+
+static void usage(void)
+{
+	PX4_INFO("usage:");
+	PX4_INFO("  dshot_4way probe [n]           read-only: does the ESC bootloader answer?");
+	PX4_INFO("  dshot_4way dump [n]            read-only: dump ESC settings (default n=4)");
+	PX4_INFO("  dshot_4way beacon <esc> <v>    write Beacon Delay (1=1m..4=10m,5=Infinite)");
+	PX4_INFO("  dshot_4way start [device]      4way passthrough (default /dev/ttyACM0)");
+	PX4_INFO("  run 'dshot stop' first, and 'dshot start' after. REMOVE PROPS.");
+}
+
+extern "C" __EXPORT int dshot_4way_main(int argc, char *argv[])
+{
+	if (argc >= 2 && strcmp(argv[1], "dump") == 0) {
+		int n = (argc >= 3) ? atoi(argv[2]) : 4;
+		return dshot_4way_dump(n);
+	}
+
+	if (argc >= 2 && strcmp(argv[1], "probe") == 0) {
+		int n = (argc >= 3) ? atoi(argv[2]) : 4;
+		return dshot_4way_probe(n);
+	}
+
+	if (argc >= 2 && strcmp(argv[1], "beacon") == 0) {
+		if (argc < 4) {
+			PX4_ERR("usage: dshot_4way beacon <esc_index> <value 1..5>");
+			return 1;
+		}
+
+		return dshot_4way_set_beacon(atoi(argv[2]), atoi(argv[3]));
+	}
+
+	if (argc < 2 || strcmp(argv[1], "start") != 0) {
+		usage();
+		return 1;
+	}
+
+	const char *device = (argc >= 3) ? argv[2] : "/dev/ttyACM0";
+
+	int fd = open(device, O_RDWR | O_NONBLOCK | O_NOCTTY);
+
+	if (fd < 0) {
+		PX4_ERR("failed to open %s", device);
+		return 1;
+	}
+
+	uint8_t esc_count = esc4wayInit();
+
+	if (esc_count == 0) {
+		PX4_ERR("no DShot channels found (is 'dshot' stopped and configured?)");
+		close(fd);
+		return 1;
+	}
+
+	PX4_INFO("4way passthrough on %s, %u ESC(s). Connect esc-configurator now.",
+		 device, (unsigned)esc_count);
+	PX4_INFO("REMOVE PROPS. This blocks until the tool sends 'exit interface'.");
+
+	serialPort_t port;
+	port.fd = fd;
+
+	/* Runs the full 4way session; returns when the host sends cmd_InterfaceExit
+	 * (esc4wayRelease() is invoked internally on exit). */
+	esc4wayProcess(&port);
+
+	esc4wayRelease();
+	close(fd);
+
+	PX4_INFO("4way passthrough ended. Run 'dshot start' to restore motors.");
+	return 0;
+}

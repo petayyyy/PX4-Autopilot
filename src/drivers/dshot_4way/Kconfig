@@ -1,0 +1,7 @@
+menuconfig DRIVERS_DSHOT_4WAY
+	bool "dshot_4way (BLHeli 4way passthrough)"
+	default n
+	---help---
+		BLHeli/SiLabs bootloader 4way passthrough over a serial port,
+		so esc-configurator / BLHeliSuite can read & write ESC settings
+		(e.g. Beacon Delay) with the ESCs soldered to the flight controller.
