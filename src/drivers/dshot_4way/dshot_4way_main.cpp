@@ -18,6 +18,9 @@
 #include <px4_platform_common/px4_config.h>
 #include <px4_platform_common/log.h>
 
+#include <uORB/Subscription.hpp>
+#include <uORB/topics/actuator_armed.h>
+
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -38,6 +41,21 @@ extern "C" {
 	int     dshot_4way_set_beacon(int esc_index, int value);
 }
 
+/* Safety guard: every subcommand bit-bangs the ESC signal lines directly with
+ * interrupts disabled for milliseconds at a time. That is only ever safe on the
+ * bench with motors stopped ("dshot stop") and props removed. Running it while
+ * the vehicle is armed would fight the control loop and drive the motor pins by
+ * hand -> refuse. actuator_armed is published continuously by commander; if it
+ * has never been advertised the vehicle cannot be armed, so copy()==false (which
+ * leaves armed=false) is the correct fail-safe result. */
+static bool vehicle_is_armed(void)
+{
+	uORB::Subscription armed_sub{ORB_ID(actuator_armed)};
+	actuator_armed_s armed{};
+	armed_sub.copy(&armed);
+	return armed.armed || armed.prearmed;
+}
+
 static void usage(void)
 {
 	PX4_INFO("usage:");
@@ -50,6 +68,15 @@ static void usage(void)
 
 extern "C" __EXPORT int dshot_4way_main(int argc, char *argv[])
 {
+	/* Refuse any hardware-touching subcommand while armed (see vehicle_is_armed). */
+	if (argc >= 2 && (strcmp(argv[1], "dump") == 0 || strcmp(argv[1], "probe") == 0
+			  || strcmp(argv[1], "beacon") == 0 || strcmp(argv[1], "start") == 0)) {
+		if (vehicle_is_armed()) {
+			PX4_ERR("refusing '%s': vehicle is ARMED. Disarm, run 'dshot stop', REMOVE PROPS.", argv[1]);
+			return 1;
+		}
+	}
+
 	if (argc >= 2 && strcmp(argv[1], "dump") == 0) {
 		int n = (argc >= 3) ? atoi(argv[2]) : 4;
 		return dshot_4way_dump(n);
