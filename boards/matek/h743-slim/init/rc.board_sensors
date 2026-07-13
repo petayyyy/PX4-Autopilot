@@ -28,5 +28,8 @@ fi
 # Internal baro
 dps310 -I start -a 118
 
-# External mag
-qmc5883l -X start -a 13
+# External mag — driver removed from build (COMMON_MAGNETOMETER off).
+# This vehicle runs mag-free: SYS_HAS_MAG=0, EKF2_MAG_TYPE=5 (None), yaw from
+# external vision. Re-enabling a compass needs both the driver back in the board
+# config and this line uncommented.
+# qmc5883l -X start -a 13
