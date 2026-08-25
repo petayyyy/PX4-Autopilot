@@ -91,7 +91,7 @@ public:
 	/** @see ModuleBase */
 	static int task_spawn(int argc, char *argv[]);
 
-	bool telemetry_enabled() const { return _telemetry != nullptr; }
+	bool telemetry_enabled() const { return _telemetry[0] != nullptr || _telemetry[1] != nullptr; }
 
 	bool updateOutputs(bool stop_motors, uint16_t outputs[MAX_ACTUATORS],
 			   unsigned num_outputs, unsigned num_control_groups_updated) override;
@@ -120,18 +120,23 @@ private:
 		void clear() { num_repetitions = 0; }
 	};
 
+	static constexpr int NUM_TELEMETRY_BUSSES = 2;
+
 	struct Telemetry {
 		DShotTelemetry handler{};
-		uORB::PublicationMultiData<esc_status_s> esc_status_pub{ORB_ID(esc_status)};
-		int last_telemetry_index{-1};
-		uint8_t actuator_functions[esc_status_s::CONNECTED_ESC_MAX] {};
+		int first_motor_index{0}; ///< global (esc_status) index of this bus' first motor
+		int num_motors{0};
+		int last_telemetry_index{-1}; ///< bus-local telemetry index of the last received frame
+		bool wrapped_since_publish{false};
 	};
 
 	void enable_dshot_outputs(const bool enabled);
 
-	void init_telemetry(const char *device);
+	void init_telemetry(const char *device, int bus);
 
-	void handle_new_telemetry_data(const int telemetry_index, const DShotTelemetry::EscData &data);
+	void handle_new_telemetry_data(const int bus, const int telemetry_index, const DShotTelemetry::EscData &data);
+
+	void maybe_publish_esc_status();
 
 	int request_esc_info();
 
@@ -146,14 +151,18 @@ private:
 	MixingOutput _mixing_output{PARAM_PREFIX, DIRECT_PWM_OUTPUT_CHANNELS, *this, MixingOutput::SchedulingPolicy::Auto, false, false};
 	uint32_t _reversible_outputs{};
 
-	Telemetry *_telemetry{nullptr};
+	Telemetry *_telemetry[NUM_TELEMETRY_BUSSES] {nullptr, nullptr};
+	uORB::PublicationMultiData<esc_status_s> _esc_status_pub{ORB_ID(esc_status)};
+	uint8_t _actuator_functions[esc_status_s::CONNECTED_ESC_MAX] {}; ///< indexed by global esc_status index
+	hrt_abstime _esc_status_first_wrap_time{0}; ///< 0 if no bus has wrapped since the last publish
 
-	static char _telemetry_device[20];
-	static px4::atomic_bool _request_telemetry_init;
+	static char _telemetry_device[NUM_TELEMETRY_BUSSES][20];
+	static px4::atomic_bool _request_telemetry_init[NUM_TELEMETRY_BUSSES];
 
 	px4::atomic<Command *> _new_command{nullptr};
 
 	px4::atomic<DShotTelemetry::OutputBuffer *> _request_esc_info{nullptr};
+	int _esc_info_bus{0}; ///< which bus the in-progress esc_info request was routed to
 
 	bool _outputs_initialized{false};
 	bool _outputs_on{false};

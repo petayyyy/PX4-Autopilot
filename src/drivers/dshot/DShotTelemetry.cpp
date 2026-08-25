@@ -223,6 +223,14 @@ uint8_t DShotTelemetry::crc8(const uint8_t *buf, uint8_t len)
 
 void DShotTelemetry::requestNextMotor()
 {
+	if (_num_motors <= 0) {
+		// no motors assigned to this bus (e.g. DSHOT_TEL_SPLIT points elsewhere): nothing to poll
+		_current_motor_index_request = -1;
+		_current_request_start = 0;
+		_frame_position = 0;
+		return;
+	}
+
 	_current_motor_index_request = (_current_motor_index_request + 1) % _num_motors;
 	_current_request_start = 0;
 	_frame_position = 0;
@@ -230,6 +238,10 @@ void DShotTelemetry::requestNextMotor()
 
 int DShotTelemetry::getRequestMotorIndex()
 {
+	if (_num_motors <= 0) {
+		return -1;
+	}
+
 	if (_current_request_start != 0) {
 		// already in progress, do not send another request
 		return -1;
