@@ -273,8 +273,8 @@ void DShot::maybe_publish_esc_status()
 	esc_status.esc_connectiontype = esc_status_s::ESC_CONNECTION_TYPE_DSHOT;
 	esc_status.esc_count = (bus0_active ? _telemetry[0]->num_motors : 0) + (bus1_active ? _telemetry[1]->num_motors : 0);
 	++esc_status.counter;
-	// FIXME: mark all ESC's as online, otherwise commander complains even for a single dropout
-	esc_status.esc_online_flags = (1 << esc_status.esc_count) - 1;
+	// esc_online_flags was accumulated per-ESC in handle_new_telemetry_data() above: bits are only
+	// set for motors that actually returned a valid telemetry frame this cycle.
 	esc_status.esc_armed_flags = (1 << esc_status.esc_count) - 1;
 
 	_esc_status_pub.update();
