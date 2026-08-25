@@ -5,9 +5,32 @@ serial_config:
         name: DSHOT_TEL_CFG
         group: DShot
 
+    - command: dshot telemetry ${SERIAL_DEV} -b 1
+      port_config_param:
+        name: DSHOT_TEL2_CFG
+        group: DShot
+      label: DShot Telemetry Bus 2
+
 parameters:
     - group: DShot
       definitions:
+        DSHOT_TEL_SPLIT:
+            description:
+                short: First motor index served by the second telemetry bus
+                long: |
+                    1-based index of the first motor (in the space of configured DShot outputs)
+                    that is polled for telemetry on the second UART (DSHOT_TEL2_CFG) instead of
+                    the first (DSHOT_TEL_CFG).
+
+                    Set to 0 to disable the second telemetry bus: all motors are then polled on
+                    the first bus only, exactly as if this parameter did not exist.
+
+                    Example: with 8 motors and DSHOT_TEL_SPLIT=5, motors 1-4 are polled on the
+                    first telemetry bus and motors 5-8 on the second.
+            type: int32
+            min: 0
+            max: 16
+            default: 0
         DSHOT_MIN:
             description:
                 short: Minimum DShot Motor Output
