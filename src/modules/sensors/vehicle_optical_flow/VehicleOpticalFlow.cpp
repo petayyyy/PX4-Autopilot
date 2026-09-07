@@ -43,6 +43,12 @@ using namespace time_literals;
 
 static constexpr uint32_t SENSOR_TIMEOUT{300_ms};
 
+// maximum samples drained from the selected flow instance per cycle
+static constexpr uint8_t MAX_FLOW_UPDATES{8};
+
+// minimum time on the secondary source before returning to a freshly re-acquired primary source
+static constexpr hrt_abstime FLOW_SOURCE_SWITCH_DEBOUNCE{1_s};
+
 VehicleOpticalFlow::VehicleOpticalFlow() :
 	ModuleParams(nullptr),
 	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::nav_and_controllers)
@@ -60,8 +66,6 @@ VehicleOpticalFlow::~VehicleOpticalFlow()
 
 bool VehicleOpticalFlow::Start()
 {
-	_sensor_flow_sub.registerCallback();
-
 	_sensor_gyro_sub.registerCallback();
 	_sensor_gyro_sub.set_required_updates(sensor_gyro_s::ORB_QUEUE_LENGTH / 2);
 
@@ -76,7 +80,6 @@ void VehicleOpticalFlow::Stop()
 	Deinit();
 
 	// clear all registered callbacks
-	_sensor_flow_sub.unregisterCallback();
 	_sensor_gyro_sub.unregisterCallback();
 	_sensor_selection_sub.unregisterCallback();
 }
@@ -92,6 +95,7 @@ void VehicleOpticalFlow::ParametersUpdate()
 		updateParams();
 
 		_flow_rotation = get_rot_matrix((enum Rotation)_param_sens_flow_rot.get());
+		_flow_rotation_mavlink = get_rot_matrix((enum Rotation)_param_sens_flow_rot_m.get());
 	}
 }
 
@@ -107,239 +111,256 @@ void VehicleOpticalFlow::Run()
 		UpdateSensorGyro();
 	}
 
-	sensor_optical_flow_s sensor_optical_flow;
+	UpdateFlowSources();
 
-	if (_sensor_flow_sub.update(&sensor_optical_flow)) {
+	if (_flow_sensor_selected >= 0) {
+		sensor_optical_flow_s sensor_optical_flow;
+		const uint8_t source_index = static_cast<uint8_t>(_flow_source);
+		const matrix::Dcmf &flow_rotation = SelectedFlowRotationMatrix();
+		const enum Rotation flow_rotation_enum = SelectedFlowRotation();
+		int flow_updates = 0;
 
-		// clear data accumulation if there's a gap in data
-		const uint64_t integration_gap_threshold_us = sensor_optical_flow.integration_timespan_us * 2;
+		while (_sensor_flow_subs[_flow_sensor_selected].update(&sensor_optical_flow)
+		       && (flow_updates < MAX_FLOW_UPDATES)) {
+			flow_updates++;
 
-		if ((sensor_optical_flow.timestamp_sample >= _flow_timestamp_sample_last + integration_gap_threshold_us)
-		    || (_accumulated_count > 0 && (sensor_optical_flow.quality > 0) && _quality_sum == 0)) {
-
-			ClearAccumulatedData();
-		}
-
-
-		const hrt_abstime timestamp_oldest = sensor_optical_flow.timestamp_sample - sensor_optical_flow.integration_timespan_us;
-		const hrt_abstime timestamp_newest = sensor_optical_flow.timestamp;
-
-		// delta angle
-		//  - from sensor_optical_flow if available, otherwise use synchronized sensor_gyro if available
-		if (sensor_optical_flow.delta_angle_available && Vector2f(sensor_optical_flow.delta_angle).isAllFinite()) {
-			// passthrough integrated gyro if available
-			Vector3f delta_angle(sensor_optical_flow.delta_angle);
-
-			if (!PX4_ISFINITE(delta_angle(2))) {
-				// Some sensors only provide X and Y angular rates, rotate them but place back the NAN on the Z axis
-				delta_angle(2) = 0.f;
-				_delta_angle += _flow_rotation * delta_angle;
-				_delta_angle(2) = NAN;
-
-			} else {
-				_delta_angle += _flow_rotation * delta_angle;
+			// Skip samples queued before this source was selected (e.g. after a
+			// source switch) so accumulated data stays consistent per source.
+			if (sensor_optical_flow.timestamp_sample <= _flow_source_sample_last[source_index]) {
+				continue;
 			}
 
-			_delta_angle_available = true;
+			_flow_source_sample_last[source_index] = sensor_optical_flow.timestamp_sample;
 
-		} else {
-			_delta_angle_available = false;
+			// clear data accumulation if there's a gap in data
+			const uint64_t integration_gap_threshold_us = sensor_optical_flow.integration_timespan_us * 2;
 
-			// integrate synchronized gyro
-			gyroSample gyro_sample;
+			if ((sensor_optical_flow.timestamp_sample >= _flow_timestamp_sample_last + integration_gap_threshold_us)
+			    || (_accumulated_count > 0 && (sensor_optical_flow.quality > 0) && _quality_sum == 0)) {
 
-			while (_gyro_buffer.pop_oldest(timestamp_oldest, timestamp_newest, &gyro_sample)) {
+				ClearAccumulatedData();
+			}
 
-				_gyro_integrator.put(gyro_sample.data, gyro_sample.dt);
+			const hrt_abstime timestamp_oldest = sensor_optical_flow.timestamp_sample - sensor_optical_flow.integration_timespan_us;
+			const hrt_abstime timestamp_newest = sensor_optical_flow.timestamp;
 
-				float min_interval_s = (sensor_optical_flow.integration_timespan_us * 1e-6f) * 0.99f;
+			// delta angle
+			//  - from sensor_optical_flow if available, otherwise use synchronized sensor_gyro if available
+			if (sensor_optical_flow.delta_angle_available && Vector2f(sensor_optical_flow.delta_angle).isAllFinite()) {
+				// passthrough integrated gyro if available
+				Vector3f delta_angle(sensor_optical_flow.delta_angle);
 
-				if (_gyro_integrator.integral_dt() > min_interval_s) {
-					//PX4_INFO("integral dt: %.6f, min interval: %.6f", (double)_gyro_integrator.integral_dt(),(double) min_interval_s);
-					break;
+				if (!PX4_ISFINITE(delta_angle(2))) {
+					// Some sensors only provide X and Y angular rates, rotate them but place back the NAN on the Z axis
+					delta_angle(2) = 0.f;
+					_delta_angle += flow_rotation * delta_angle;
+					_delta_angle(2) = NAN;
+
+				} else {
+					_delta_angle += flow_rotation * delta_angle;
+				}
+
+				_delta_angle_available = true;
+
+			} else {
+				_delta_angle_available = false;
+
+				// integrate synchronized gyro
+				gyroSample gyro_sample;
+
+				while (_gyro_buffer.pop_oldest(timestamp_oldest, timestamp_newest, &gyro_sample)) {
+
+					_gyro_integrator.put(gyro_sample.data, gyro_sample.dt);
+
+					float min_interval_s = (sensor_optical_flow.integration_timespan_us * 1e-6f) * 0.99f;
+
+					if (_gyro_integrator.integral_dt() > min_interval_s) {
+						//PX4_INFO("integral dt: %.6f, min interval: %.6f", (double)_gyro_integrator.integral_dt(),(double) min_interval_s);
+						break;
+					}
+				}
+
+				Vector3f delta_angle{NAN, NAN, NAN};
+				uint16_t delta_angle_dt;
+
+				if (_gyro_integrator.reset(delta_angle, delta_angle_dt)) {
+					_delta_angle += delta_angle;
+
+				} else {
+					// force integrator reset
+					_gyro_integrator.reset();
 				}
 			}
 
-			Vector3f delta_angle{NAN, NAN, NAN};
-			uint16_t delta_angle_dt;
-
-			if (_gyro_integrator.reset(delta_angle, delta_angle_dt)) {
-				_delta_angle += delta_angle;
-
-			} else {
-				// force integrator reset
-				_gyro_integrator.reset();
-			}
-		}
-
-		// distance
-		//  - from sensor_optical_flow if available, otherwise use downward distance_sensor if available
-		if (sensor_optical_flow.distance_available && PX4_ISFINITE(sensor_optical_flow.distance_m)
-		    && (sensor_optical_flow.distance_m <= _param_ekf2_rng_can_max.get())) {
-			if (!PX4_ISFINITE(_distance_sum)) {
-				_distance_sum = sensor_optical_flow.distance_m;
-				_distance_sum_count = 1;
-
-			} else {
-				_distance_sum += sensor_optical_flow.distance_m;
-				_distance_sum_count += 1;
-			}
-
-		} else {
-			// otherwise use buffered downward facing distance_sensor if available
-			rangeSample range_sample;
-
-			if (_range_buffer.peak_first_older_than(sensor_optical_flow.timestamp_sample, &range_sample)) {
+			// distance
+			//  - from sensor_optical_flow if available, otherwise use downward distance_sensor if available
+			if (sensor_optical_flow.distance_available && PX4_ISFINITE(sensor_optical_flow.distance_m)
+			    && (sensor_optical_flow.distance_m <= _param_ekf2_rng_can_max.get())) {
 				if (!PX4_ISFINITE(_distance_sum)) {
-					_distance_sum = range_sample.data;
+					_distance_sum = sensor_optical_flow.distance_m;
 					_distance_sum_count = 1;
 
 				} else {
-					_distance_sum += range_sample.data;
+					_distance_sum += sensor_optical_flow.distance_m;
 					_distance_sum_count += 1;
 				}
-			}
-		}
-
-		_flow_timestamp_sample_last = sensor_optical_flow.timestamp_sample;
-		_flow_integral(0) += sensor_optical_flow.pixel_flow[0];
-		_flow_integral(1) += sensor_optical_flow.pixel_flow[1];
-
-		_integration_timespan_us += sensor_optical_flow.integration_timespan_us;
-
-		_quality_sum += sensor_optical_flow.quality;
-		_accumulated_count++;
-
-		bool publish = true;
-
-		if (_param_sens_flow_rate.get() > 0) {
-			const float interval_us = 1e6f / _param_sens_flow_rate.get();
-
-			// don't allow publishing faster than SENS_FLOW_RATE
-			if (_integration_timespan_us < interval_us) {
-				publish = false;
-			}
-		}
-
-		if (publish) {
-			vehicle_optical_flow_s vehicle_optical_flow{};
-
-			vehicle_optical_flow.timestamp_sample = sensor_optical_flow.timestamp_sample;
-			vehicle_optical_flow.device_id = sensor_optical_flow.device_id;
-
-			_flow_integral.copyTo(vehicle_optical_flow.pixel_flow);
-			_delta_angle.copyTo(vehicle_optical_flow.delta_angle);
-
-			vehicle_optical_flow.integration_timespan_us = _integration_timespan_us;
-
-			vehicle_optical_flow.quality = _quality_sum / _accumulated_count;
-
-			if (_distance_sum_count > 0 && PX4_ISFINITE(_distance_sum)) {
-				vehicle_optical_flow.distance_m = _distance_sum / _distance_sum_count;
 
 			} else {
-				vehicle_optical_flow.distance_m = NAN;
+				// otherwise use buffered downward facing distance_sensor if available
+				rangeSample range_sample;
+
+				if (_range_buffer.peak_first_older_than(sensor_optical_flow.timestamp_sample, &range_sample)) {
+					if (!PX4_ISFINITE(_distance_sum)) {
+						_distance_sum = range_sample.data;
+						_distance_sum_count = 1;
+
+					} else {
+						_distance_sum += range_sample.data;
+						_distance_sum_count += 1;
+					}
+				}
 			}
 
-			// SENS_FLOW_MAXR
-			if (PX4_ISFINITE(sensor_optical_flow.max_flow_rate)
-			    && (sensor_optical_flow.max_flow_rate <= _param_sens_flow_maxr.get())) {
+			_flow_timestamp_sample_last = sensor_optical_flow.timestamp_sample;
+			_flow_integral(0) += sensor_optical_flow.pixel_flow[0];
+			_flow_integral(1) += sensor_optical_flow.pixel_flow[1];
 
-				vehicle_optical_flow.max_flow_rate = sensor_optical_flow.max_flow_rate;
+			_integration_timespan_us += sensor_optical_flow.integration_timespan_us;
 
-			} else {
-				vehicle_optical_flow.max_flow_rate = _param_sens_flow_maxr.get();
+			_quality_sum += sensor_optical_flow.quality;
+			_accumulated_count++;
+
+			bool publish = true;
+
+			if (_param_sens_flow_rate.get() > 0) {
+				const float interval_us = 1e6f / _param_sens_flow_rate.get();
+
+				// don't allow publishing faster than SENS_FLOW_RATE
+				if (_integration_timespan_us < interval_us) {
+					publish = false;
+				}
 			}
 
-			// SENS_FLOW_MINHGT
-			if (PX4_ISFINITE(sensor_optical_flow.min_ground_distance)
-			    && (sensor_optical_flow.min_ground_distance >= _param_sens_flow_minhgt.get())) {
+			if (publish) {
+				vehicle_optical_flow_s vehicle_optical_flow{};
 
-				vehicle_optical_flow.min_ground_distance = sensor_optical_flow.min_ground_distance;
+				vehicle_optical_flow.timestamp_sample = sensor_optical_flow.timestamp_sample;
+				vehicle_optical_flow.device_id = sensor_optical_flow.device_id;
 
-			} else {
-				vehicle_optical_flow.min_ground_distance = _param_sens_flow_minhgt.get();
-			}
+				_flow_integral.copyTo(vehicle_optical_flow.pixel_flow);
+				_delta_angle.copyTo(vehicle_optical_flow.delta_angle);
 
-			// SENS_FLOW_MAXHGT
-			if (PX4_ISFINITE(sensor_optical_flow.max_ground_distance)
-			    && (sensor_optical_flow.max_ground_distance <= _param_sens_flow_maxhgt.get())) {
+				vehicle_optical_flow.integration_timespan_us = _integration_timespan_us;
 
-				vehicle_optical_flow.max_ground_distance = sensor_optical_flow.max_ground_distance;
+				vehicle_optical_flow.quality = _quality_sum / _accumulated_count;
 
-			} else {
-				vehicle_optical_flow.max_ground_distance = _param_sens_flow_maxhgt.get();
-			}
+				if (_distance_sum_count > 0 && PX4_ISFINITE(_distance_sum)) {
+					vehicle_optical_flow.distance_m = _distance_sum / _distance_sum_count;
 
-
-			// rotate (SENS_FLOW_ROT)
-			float zeroval = 0.f;
-			rotate_3f((enum Rotation)_param_sens_flow_rot.get(), vehicle_optical_flow.pixel_flow[0],
-				  vehicle_optical_flow.pixel_flow[1], zeroval);
-
-			vehicle_optical_flow.timestamp = hrt_absolute_time();
-			_vehicle_optical_flow_pub.publish(vehicle_optical_flow);
-
-			// vehicle_optical_flow_vel if distance is available (for logging)
-			if (_distance_sum_count > 0 && PX4_ISFINITE(_distance_sum)) {
-				const float range = _distance_sum / _distance_sum_count;
-
-				vehicle_optical_flow_vel_s flow_vel{};
-
-				flow_vel.timestamp_sample = vehicle_optical_flow.timestamp_sample;
-
-				// NOTE: the EKF uses the reverse sign convention to the flow sensor. EKF assumes positive LOS rate
-				// is produced by a RH rotation of the image about the sensor axis.
-				const Vector2f flow_xy_rad{-vehicle_optical_flow.pixel_flow[0], -vehicle_optical_flow.pixel_flow[1]};
-				const Vector3f gyro_rate_integral{-vehicle_optical_flow.delta_angle[0], -vehicle_optical_flow.delta_angle[1], -vehicle_optical_flow.delta_angle[2]};
-
-				const float flow_dt = 1e-6f * vehicle_optical_flow.integration_timespan_us;
-
-				// compensate for body motion to give a LOS rate
-				const Vector2f flow_compensated_XY_rad = flow_xy_rad - gyro_rate_integral.xy();
-
-				Vector3f vel_optflow_body;
-				vel_optflow_body(0) = - range * flow_compensated_XY_rad(1) / flow_dt;
-				vel_optflow_body(1) =   range * flow_compensated_XY_rad(0) / flow_dt;
-				vel_optflow_body(2) = 0.f;
-
-				// vel_body
-				flow_vel.vel_body[0] = vel_optflow_body(0);
-				flow_vel.vel_body[1] = vel_optflow_body(1);
-
-				// vel_ne
-				flow_vel.vel_ne[0] = NAN;
-				flow_vel.vel_ne[1] = NAN;
-
-				vehicle_attitude_s vehicle_attitude{};
-
-				if (_vehicle_attitude_sub.copy(&vehicle_attitude)) {
-					const matrix::Dcmf R_to_earth = matrix::Quatf(vehicle_attitude.q);
-					const Vector3f flow_vel_ne = R_to_earth * vel_optflow_body;
-
-					flow_vel.vel_ne[0] = flow_vel_ne(0);
-					flow_vel.vel_ne[1] = flow_vel_ne(1);
+				} else {
+					vehicle_optical_flow.distance_m = NAN;
 				}
 
-				const Vector2f flow_rate(flow_xy_rad * (1.f / flow_dt));
-				flow_rate.copyTo(flow_vel.flow_rate_uncompensated);
+				// SENS_FLOW_MAXR
+				if (PX4_ISFINITE(sensor_optical_flow.max_flow_rate)
+				    && (sensor_optical_flow.max_flow_rate <= _param_sens_flow_maxr.get())) {
 
-				const Vector2f flow_rate_compensated(flow_compensated_XY_rad * (1.f / flow_dt));
-				flow_rate_compensated.copyTo(flow_vel.flow_rate_compensated);
+					vehicle_optical_flow.max_flow_rate = sensor_optical_flow.max_flow_rate;
 
-				const Vector3f measured_body_rate(gyro_rate_integral * (1.f / flow_dt));
+				} else {
+					vehicle_optical_flow.max_flow_rate = _param_sens_flow_maxr.get();
+				}
 
-				// gyro_rate
-				flow_vel.gyro_rate[0] = measured_body_rate(0);
-				flow_vel.gyro_rate[1] = measured_body_rate(1);
-				flow_vel.gyro_rate[2] = measured_body_rate(2);
+				// SENS_FLOW_MINHGT
+				if (PX4_ISFINITE(sensor_optical_flow.min_ground_distance)
+				    && (sensor_optical_flow.min_ground_distance >= _param_sens_flow_minhgt.get())) {
 
-				flow_vel.timestamp = hrt_absolute_time();
+					vehicle_optical_flow.min_ground_distance = sensor_optical_flow.min_ground_distance;
 
-				_vehicle_optical_flow_vel_pub.publish(flow_vel);
+				} else {
+					vehicle_optical_flow.min_ground_distance = _param_sens_flow_minhgt.get();
+				}
+
+				// SENS_FLOW_MAXHGT
+				if (PX4_ISFINITE(sensor_optical_flow.max_ground_distance)
+				    && (sensor_optical_flow.max_ground_distance <= _param_sens_flow_maxhgt.get())) {
+
+					vehicle_optical_flow.max_ground_distance = sensor_optical_flow.max_ground_distance;
+
+				} else {
+					vehicle_optical_flow.max_ground_distance = _param_sens_flow_maxhgt.get();
+				}
+
+
+				// rotate (SENS_FLOW_ROT for DroneCAN, SENS_FLOW_ROT_M for MAVLink)
+				float zeroval = 0.f;
+				rotate_3f(flow_rotation_enum, vehicle_optical_flow.pixel_flow[0],
+					  vehicle_optical_flow.pixel_flow[1], zeroval);
+
+				vehicle_optical_flow.timestamp = hrt_absolute_time();
+				_vehicle_optical_flow_pub.publish(vehicle_optical_flow);
+
+				// vehicle_optical_flow_vel if distance is available (for logging)
+				if (_distance_sum_count > 0 && PX4_ISFINITE(_distance_sum)) {
+					const float range = _distance_sum / _distance_sum_count;
+
+					vehicle_optical_flow_vel_s flow_vel{};
+
+					flow_vel.timestamp_sample = vehicle_optical_flow.timestamp_sample;
+
+					// NOTE: the EKF uses the reverse sign convention to the flow sensor. EKF assumes positive LOS rate
+					// is produced by a RH rotation of the image about the sensor axis.
+					const Vector2f flow_xy_rad{-vehicle_optical_flow.pixel_flow[0], -vehicle_optical_flow.pixel_flow[1]};
+					const Vector3f gyro_rate_integral{-vehicle_optical_flow.delta_angle[0], -vehicle_optical_flow.delta_angle[1], -vehicle_optical_flow.delta_angle[2]};
+
+					const float flow_dt = 1e-6f * vehicle_optical_flow.integration_timespan_us;
+
+					// compensate for body motion to give a LOS rate
+					const Vector2f flow_compensated_XY_rad = flow_xy_rad - gyro_rate_integral.xy();
+
+					Vector3f vel_optflow_body;
+					vel_optflow_body(0) = - range * flow_compensated_XY_rad(1) / flow_dt;
+					vel_optflow_body(1) =   range * flow_compensated_XY_rad(0) / flow_dt;
+					vel_optflow_body(2) = 0.f;
+
+					// vel_body
+					flow_vel.vel_body[0] = vel_optflow_body(0);
+					flow_vel.vel_body[1] = vel_optflow_body(1);
+
+					// vel_ne
+					flow_vel.vel_ne[0] = NAN;
+					flow_vel.vel_ne[1] = NAN;
+
+					vehicle_attitude_s vehicle_attitude{};
+
+					if (_vehicle_attitude_sub.copy(&vehicle_attitude)) {
+						const matrix::Dcmf R_to_earth = matrix::Quatf(vehicle_attitude.q);
+						const Vector3f flow_vel_ne = R_to_earth * vel_optflow_body;
+
+						flow_vel.vel_ne[0] = flow_vel_ne(0);
+						flow_vel.vel_ne[1] = flow_vel_ne(1);
+					}
+
+					const Vector2f flow_rate(flow_xy_rad * (1.f / flow_dt));
+					flow_rate.copyTo(flow_vel.flow_rate_uncompensated);
+
+					const Vector2f flow_rate_compensated(flow_compensated_XY_rad * (1.f / flow_dt));
+					flow_rate_compensated.copyTo(flow_vel.flow_rate_compensated);
+
+					const Vector3f measured_body_rate(gyro_rate_integral * (1.f / flow_dt));
+
+					// gyro_rate
+					flow_vel.gyro_rate[0] = measured_body_rate(0);
+					flow_vel.gyro_rate[1] = measured_body_rate(1);
+					flow_vel.gyro_rate[2] = measured_body_rate(2);
+
+					flow_vel.timestamp = hrt_absolute_time();
+
+					_vehicle_optical_flow_vel_pub.publish(flow_vel);
+				}
+
+				ClearAccumulatedData();
 			}
-
-			ClearAccumulatedData();
 		}
 	}
 
@@ -347,6 +368,151 @@ void VehicleOpticalFlow::Run()
 	ScheduleDelayed(10_ms);
 
 	perf_end(_cycle_perf);
+}
+
+VehicleOpticalFlow::FlowSource VehicleOpticalFlow::FlowSourceFromBusType(uint8_t bus_type)
+{
+	switch (bus_type) {
+	case device::Device::DeviceBusType::DeviceBusType_UAVCAN:
+		return FlowSource::UAVCAN;
+
+	case device::Device::DeviceBusType::DeviceBusType_MAVLINK:
+		return FlowSource::MAVLINK;
+
+	default:
+		return FlowSource::NONE;
+	}
+}
+
+const char *VehicleOpticalFlow::FlowSourceName(FlowSource source)
+{
+	switch (source) {
+	case FlowSource::UAVCAN:
+		return "UAVCAN";
+
+	case FlowSource::MAVLINK:
+		return "MAVLink";
+
+	default:
+		return "none";
+	}
+}
+
+enum Rotation VehicleOpticalFlow::SelectedFlowRotation() const
+{
+	return (_flow_source == FlowSource::MAVLINK)
+	       ? (enum Rotation)_param_sens_flow_rot_m.get()
+	       : (enum Rotation)_param_sens_flow_rot.get();
+}
+
+const matrix::Dcmf &VehicleOpticalFlow::SelectedFlowRotationMatrix() const
+{
+	return (_flow_source == FlowSource::MAVLINK) ? _flow_rotation_mavlink : _flow_rotation;
+}
+
+void VehicleOpticalFlow::UpdateFlowSources()
+{
+	// Classify each advertised sensor_optical_flow instance by device bus type.
+	// This is deliberately based on the device_id bus type instead of the uORB
+	// instance assignment, which varies with startup order.
+	for (uint8_t i = 0; i < _sensor_flow_subs.size(); i++) {
+		sensor_optical_flow_s sensor_optical_flow;
+
+		if (_sensor_flow_subs[i].copy(&sensor_optical_flow)
+		    && (sensor_optical_flow.timestamp != 0)
+		    && (sensor_optical_flow.device_id != 0)) {
+
+			device::Device::DeviceId device_id{};
+			device_id.devid = sensor_optical_flow.device_id;
+
+			const FlowSource source = FlowSourceFromBusType(device_id.devid_s.bus_type);
+
+			if (source != FlowSource::NONE) {
+				const uint8_t source_index = static_cast<uint8_t>(source);
+
+				// keep the most recently updated instance of each bus type
+				if (sensor_optical_flow.timestamp > _flow_source_timestamp[source_index]) {
+					_flow_source_instance[source_index] = i;
+					_flow_source_timestamp[source_index] = sensor_optical_flow.timestamp;
+				}
+			}
+		}
+	}
+
+	const FlowSource primary_source =
+		(_param_sens_flow_prime.get() == 1) ? FlowSource::MAVLINK : FlowSource::UAVCAN;
+	const FlowSource secondary_source =
+		(primary_source == FlowSource::UAVCAN) ? FlowSource::MAVLINK : FlowSource::UAVCAN;
+
+	const hrt_abstime timeout_us = static_cast<hrt_abstime>(_param_sens_flow_to.get() * 1e6f);
+
+	const auto source_fresh = [&](FlowSource source) {
+		const uint8_t source_index = static_cast<uint8_t>(source);
+		return (_flow_source_instance[source_index] >= 0)
+		       && (hrt_elapsed_time(&_flow_source_timestamp[source_index]) < timeout_us);
+	};
+
+	const bool primary_fresh = source_fresh(primary_source);
+	const bool secondary_fresh = source_fresh(secondary_source);
+
+	// Track how long the primary source has been continuously fresh so the
+	// return to primary from the fallback source can be debounced.
+	if (primary_fresh && !_flow_primary_was_fresh) {
+		_flow_primary_fresh_since = hrt_absolute_time();
+	}
+
+	_flow_primary_was_fresh = primary_fresh;
+
+	FlowSource desired_source = FlowSource::NONE;
+
+	if (primary_fresh) {
+		desired_source = primary_source;
+
+	} else if (secondary_fresh) {
+		desired_source = secondary_source;
+	}
+
+	// Debounce the return to primary while the secondary source is still fresh,
+	// so the selection does not flap between the two sensors.
+	if ((desired_source == primary_source)
+	    && (_flow_source == secondary_source)
+	    && secondary_fresh
+	    && (hrt_elapsed_time(&_flow_primary_fresh_since) < FLOW_SOURCE_SWITCH_DEBOUNCE)) {
+
+		desired_source = secondary_source;
+	}
+
+	if (desired_source != _flow_source) {
+		_flow_source = desired_source;
+		_flow_sensor_selected = (desired_source == FlowSource::NONE)
+					? -1
+					: _flow_source_instance[static_cast<uint8_t>(desired_source)];
+
+		// never mix accumulated data from two different sources
+		ClearAccumulatedData();
+		_flow_timestamp_sample_last = 0;
+
+		if (_flow_sensor_selected >= 0) {
+			const uint8_t source_index = static_cast<uint8_t>(desired_source);
+
+			// mark any samples already queued for the newly selected source as
+			// seen, so stale samples from before the switch are not processed
+			sensor_optical_flow_s sensor_optical_flow;
+
+			if (_sensor_flow_subs[_flow_sensor_selected].copy(&sensor_optical_flow)) {
+				_flow_source_sample_last[source_index] = sensor_optical_flow.timestamp_sample;
+			}
+
+			if (hrt_elapsed_time(&_flow_source_switch_logged) > 1_s) {
+				PX4_INFO("selected %s optical flow:%d", FlowSourceName(desired_source), _flow_sensor_selected);
+				_flow_source_switch_logged = hrt_absolute_time();
+			}
+
+		} else if (hrt_elapsed_time(&_flow_source_switch_logged) > 1_s) {
+			PX4_WARN("optical flow: no valid source");
+			_flow_source_switch_logged = hrt_absolute_time();
+		}
+	}
 }
 
 void VehicleOpticalFlow::UpdateDistanceSensor()

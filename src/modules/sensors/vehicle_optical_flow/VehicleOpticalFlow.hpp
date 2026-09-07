@@ -86,6 +86,22 @@ private:
 
 	static constexpr int MAX_SENSOR_COUNT = 3;
 
+	// optical flow source (classified by device_id bus type)
+	enum class FlowSource : uint8_t {
+		NONE = 0,
+		UAVCAN = 1,
+		MAVLINK = 2,
+	};
+
+	static constexpr uint8_t FLOW_SOURCE_COUNT = 3;
+
+	static FlowSource FlowSourceFromBusType(uint8_t bus_type);
+	static const char *FlowSourceName(FlowSource source);
+
+	void UpdateFlowSources();
+	enum Rotation SelectedFlowRotation() const;
+	const matrix::Dcmf &SelectedFlowRotationMatrix() const;
+
 	uORB::Publication<vehicle_optical_flow_s> _vehicle_optical_flow_pub{ORB_ID(vehicle_optical_flow)};
 	uORB::Publication<vehicle_optical_flow_vel_s> _vehicle_optical_flow_vel_pub{ORB_ID(vehicle_optical_flow_vel)};
 
@@ -95,7 +111,8 @@ private:
 
 	uORB::Subscription _vehicle_attitude_sub{ORB_ID(vehicle_attitude)};
 
-	uORB::SubscriptionCallbackWorkItem _sensor_flow_sub{this, ORB_ID(sensor_optical_flow)};
+	uORB::SubscriptionMultiArray<sensor_optical_flow_s> _sensor_flow_subs{ORB_ID::sensor_optical_flow};
+
 	uORB::SubscriptionCallbackWorkItem _sensor_gyro_sub{this, ORB_ID(sensor_gyro)};
 	uORB::SubscriptionCallbackWorkItem _sensor_selection_sub{this, ORB_ID(sensor_selection)};
 
@@ -108,6 +125,7 @@ private:
 	perf_counter_t _cycle_perf{perf_alloc(PC_ELAPSED, MODULE_NAME": cycle")};
 
 	matrix::Dcmf _flow_rotation{matrix::eye<float, 3>()};
+	matrix::Dcmf _flow_rotation_mavlink{matrix::eye<float, 3>()};
 
 	hrt_abstime _flow_timestamp_sample_last{0};
 	matrix::Vector2f _flow_integral{};
@@ -117,6 +135,16 @@ private:
 	uint8_t _distance_sum_count{0};
 	uint16_t _quality_sum{0};
 	uint8_t _accumulated_count{0};
+
+	// optical flow source selection (DroneCAN H-Flow primary, MAVLink camera fallback)
+	FlowSource _flow_source{FlowSource::NONE};
+	int _flow_sensor_selected{-1};
+	hrt_abstime _flow_source_timestamp[FLOW_SOURCE_COUNT] {0, 0, 0};
+	int _flow_source_instance[FLOW_SOURCE_COUNT] {-1, -1, -1};
+	hrt_abstime _flow_source_sample_last[FLOW_SOURCE_COUNT] {0, 0, 0};
+	hrt_abstime _flow_primary_fresh_since{0};
+	bool _flow_primary_was_fresh{false};
+	hrt_abstime _flow_source_switch_logged{0};
 
 	int _distance_sensor_selected{-1}; // selected downward-facing DroneCAN rangefinder for flow scaling
 	hrt_abstime _last_range_sensor_update{0};
@@ -139,10 +167,13 @@ private:
 
 	DEFINE_PARAMETERS(
 		(ParamInt<px4::params::SENS_FLOW_ROT>) _param_sens_flow_rot,
+		(ParamInt<px4::params::SENS_FLOW_ROT_M>) _param_sens_flow_rot_m,
+		(ParamInt<px4::params::SENS_FLOW_PRIME>) _param_sens_flow_prime,
 		(ParamFloat<px4::params::SENS_FLOW_MINHGT>) _param_sens_flow_minhgt,
 		(ParamFloat<px4::params::SENS_FLOW_MAXHGT>) _param_sens_flow_maxhgt,
 		(ParamFloat<px4::params::SENS_FLOW_MAXR>) _param_sens_flow_maxr,
 		(ParamFloat<px4::params::SENS_FLOW_RATE>) _param_sens_flow_rate,
+		(ParamFloat<px4::params::SENS_FLOW_TO>) _param_sens_flow_to,
 		(ParamFloat<px4::params::EKF2_RNG_CAN_MAX>) _param_ekf2_rng_can_max
 	)
 };

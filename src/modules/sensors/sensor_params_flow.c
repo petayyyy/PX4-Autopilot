@@ -51,6 +51,41 @@
 PARAM_DEFINE_INT32(SENS_FLOW_ROT, 0);
 
 /**
+ * MAVLink optical flow rotation
+ *
+ * Yaw rotation of the external MAVLink optical flow camera relative to the
+ * vehicle body frame. Applied only to optical flow received over MAVLink
+ * (OPTICAL_FLOW_RAD). The on-board DroneCAN H-Flow keeps using SENS_FLOW_ROT.
+ * Zero rotation is defined as X on the camera pointing towards front of vehicle.
+ *
+ * @value 0 No rotation
+ * @value 1 Yaw 45°
+ * @value 2 Yaw 90°
+ * @value 3 Yaw 135°
+ * @value 4 Yaw 180°
+ * @value 5 Yaw 225°
+ * @value 6 Yaw 270°
+ * @value 7 Yaw 315°
+ *
+ * @group Sensors
+ */
+PARAM_DEFINE_INT32(SENS_FLOW_ROT_M, 0);
+
+/**
+ * Optical flow source priority
+ *
+ * Selects which optical flow source is preferred when both a DroneCAN (H-Flow)
+ * and a MAVLink optical flow source are available. The preferred source is used
+ * while its data is fresh; the other source is used as a fallback.
+ *
+ * @value 0 DroneCAN (H-Flow) primary
+ * @value 1 MAVLink primary
+ *
+ * @group Sensors
+ */
+PARAM_DEFINE_INT32(SENS_FLOW_PRIME, 0);
+
+/**
  * Minimum height above ground when reliant on optical flow.
  *
  * This parameter defines the minimum distance from ground at which the optical flow sensor operates reliably.
@@ -111,3 +146,21 @@ PARAM_DEFINE_FLOAT(SENS_FLOW_MAXR, 8.f);
  *
  */
 PARAM_DEFINE_FLOAT(SENS_FLOW_RATE, 70.0f);
+
+/**
+ * Optical flow source timeout
+ *
+ * Maximum time without a new sample before an optical flow source is considered
+ * stale. When the primary source is stale and a fallback source is fresh, the
+ * fallback is used. A single timeout is applied to both DroneCAN and MAVLink
+ * sources: the DroneCAN H-Flow publishes at a fixed rate, while the rate of an
+ * external MAVLink camera is not known in advance.
+ *
+ * @unit s
+ * @min 0.1
+ * @max 10.0
+ * @increment 0.1
+ * @decimal 1
+ * @group Sensors
+ */
+PARAM_DEFINE_FLOAT(SENS_FLOW_TO, 1.0f);
