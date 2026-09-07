@@ -416,6 +416,8 @@ private:
 	uORB::SubscriptionMultiArray<distance_sensor_s> _distance_sensor_subs{ORB_ID::distance_sensor};
 	hrt_abstime _last_range_sensor_update{0};
 	hrt_abstime _selected_range_sensor_timestamp{0};
+	hrt_abstime _last_range_source_switch{0};
+	hrt_abstime _last_range_source_log{0};
 	int _distance_sensor_selected{-1};
 
 	enum class RangeSource : uint8_t {
@@ -647,7 +649,10 @@ private:
 		(ParamExtFloat<px4::params::EKF2_RNG_QLTY_T>) _param_ekf2_rng_qlty_t,
 		(ParamExtFloat<px4::params::EKF2_RNG_K_GATE>) _param_ekf2_rng_k_gate,
 		(ParamFloat<px4::params::EKF2_RNG_CAN_MAX>) _param_ekf2_rng_can_max,
+		(ParamFloat<px4::params::EKF2_RNG_CAN_HYS>) _param_ekf2_rng_can_hys,
 		(ParamFloat<px4::params::EKF2_RNG_MAV_MAX>) _param_ekf2_rng_mav_max,
+		(ParamFloat<px4::params::EKF2_RNG_CAN_TO>) _param_ekf2_rng_can_to,
+		(ParamFloat<px4::params::EKF2_RNG_MAV_TO>) _param_ekf2_rng_mav_to,
 		(ParamExtFloat<px4::params::EKF2_RNG_POS_X>) _param_ekf2_rng_pos_x,
 		(ParamExtFloat<px4::params::EKF2_RNG_POS_Y>) _param_ekf2_rng_pos_y,
 		(ParamExtFloat<px4::params::EKF2_RNG_POS_Z>) _param_ekf2_rng_pos_z,

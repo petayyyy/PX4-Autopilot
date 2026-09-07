@@ -629,6 +629,21 @@ parameters:
       max: 100.0
       unit: m
       decimal: 1
+    EKF2_RNG_CAN_HYS:
+      description:
+        short: DroneCAN rangefinder switch hysteresis
+        long: Hysteresis applied when switching back from the MAVLink rangefinder
+          to the DroneCAN rangefinder. Once the DroneCAN distance exceeds
+          EKF2_RNG_CAN_MAX the MAVLink sensor is selected, and the DroneCAN
+          sensor is only re-selected after its distance falls below
+          EKF2_RNG_CAN_MAX minus this value. This prevents rapid switching when
+          hovering close to the switch threshold.
+      type: float
+      default: 2.0
+      min: 0.1
+      max: 10.0
+      unit: m
+      decimal: 1
     EKF2_RNG_MAV_MAX:
       description:
         short: Maximum MAVLink rangefinder distance
@@ -640,6 +655,32 @@ parameters:
       min: 0.1
       max: 655.35
       unit: m
+      decimal: 1
+    EKF2_RNG_CAN_TO:
+      description:
+        short: DroneCAN rangefinder freshness timeout
+        long: Maximum age of a DroneCAN rangefinder sample for it to be
+          considered available. The long-range DroneCAN sensor publishes at
+          roughly 3 Hz, so this must be larger than its sample period. A sample
+          older than this timeout is treated as a full sensor failure.
+      type: float
+      default: 1.0
+      min: 0.1
+      max: 10.0
+      unit: s
+      decimal: 1
+    EKF2_RNG_MAV_TO:
+      description:
+        short: MAVLink rangefinder freshness timeout
+        long: Maximum age of a MAVLink rangefinder sample for it to be
+          considered available. The MAVLink sensor publishes at roughly 1 Hz,
+          so this must be larger than its sample period. A sample older than
+          this timeout is treated as a full sensor failure.
+      type: float
+      default: 2.0
+      min: 0.1
+      max: 10.0
+      unit: s
       decimal: 1
     EKF2_MIN_RNG:
       description:
