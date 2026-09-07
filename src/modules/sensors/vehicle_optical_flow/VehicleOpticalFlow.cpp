@@ -174,7 +174,8 @@ void VehicleOpticalFlow::Run()
 
 		// distance
 		//  - from sensor_optical_flow if available, otherwise use downward distance_sensor if available
-		if (sensor_optical_flow.distance_available && PX4_ISFINITE(sensor_optical_flow.distance_m)) {
+		if (sensor_optical_flow.distance_available && PX4_ISFINITE(sensor_optical_flow.distance_m)
+		    && (sensor_optical_flow.distance_m <= _param_ekf2_rng_can_max.get())) {
 			if (!PX4_ISFINITE(_distance_sum)) {
 				_distance_sum = sensor_optical_flow.distance_m;
 				_distance_sum_count = 1;
@@ -357,9 +358,14 @@ void VehicleOpticalFlow::UpdateDistanceSensor()
 		for (unsigned i = 0; i < _distance_sensor_subs.size(); i++) {
 
 			if (_distance_sensor_subs[i].update(&distance_sensor)) {
-				// only use the first instace which has the correct orientation
+				device::Device::DeviceId device_id{};
+				device_id.devid = distance_sensor.device_id;
+
+				// Flow scaling must use the H-Flow's DroneCAN rangefinder, never
+				// the long-range MAVLink rangefinder selected by EKF2.
 				if ((hrt_elapsed_time(&distance_sensor.timestamp) < 100_ms)
-				    && (distance_sensor.orientation == distance_sensor_s::ROTATION_DOWNWARD_FACING)) {
+				    && (distance_sensor.orientation == distance_sensor_s::ROTATION_DOWNWARD_FACING)
+				    && (device_id.devid_s.bus_type == device::Device::DeviceBusType::DeviceBusType_UAVCAN)) {
 
 					int ndist = orb_group_count(ORB_ID(distance_sensor));
 
@@ -380,7 +386,8 @@ void VehicleOpticalFlow::UpdateDistanceSensor()
 		if (distance_sensor.orientation == distance_sensor_s::ROTATION_DOWNWARD_FACING) {
 
 			if ((distance_sensor.current_distance >= distance_sensor.min_distance)
-			    && (distance_sensor.current_distance <= distance_sensor.max_distance)) {
+			    && (distance_sensor.current_distance <= distance_sensor.max_distance)
+			    && (distance_sensor.current_distance <= _param_ekf2_rng_can_max.get())) {
 
 				rangeSample sample;
 				sample.time_us = distance_sensor.timestamp;

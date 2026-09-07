@@ -617,6 +617,30 @@ parameters:
       min: 1.0
       unit: SD
       decimal: 1
+    EKF2_RNG_CAN_MAX:
+      description:
+        short: Maximum CAN rangefinder distance
+        long: Use a downward-facing DroneCAN rangefinder only while its reported
+          distance is at or below this limit. When it exceeds the limit, the
+          estimator switches to a valid MAVLink rangefinder if available.
+      type: float
+      default: 20.0
+      min: 0.1
+      max: 100.0
+      unit: m
+      decimal: 1
+    EKF2_RNG_MAV_MAX:
+      description:
+        short: Maximum MAVLink rangefinder distance
+        long: Use a downward-facing MAVLink rangefinder only while its reported
+          distance is at or below this limit. This value should not exceed the
+          maximum distance reported by the MAVLink sensor.
+      type: float
+      default: 200.0
+      min: 0.1
+      max: 655.35
+      unit: m
+      decimal: 1
     EKF2_MIN_RNG:
       description:
         short: Expected range finder reading when on ground

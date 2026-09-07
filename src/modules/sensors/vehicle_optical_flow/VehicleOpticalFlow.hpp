@@ -39,6 +39,7 @@
 #include <Integrator.hpp>
 
 #include <lib/mathlib/math/Limits.hpp>
+#include <lib/drivers/device/Device.hpp>
 #include <lib/matrix/matrix/math.hpp>
 #include <lib/perf/perf_counter.h>
 #include <lib/sensor_calibration/Gyroscope.hpp>
@@ -117,7 +118,7 @@ private:
 	uint16_t _quality_sum{0};
 	uint8_t _accumulated_count{0};
 
-	int _distance_sensor_selected{-1}; // because we can have several distance sensor instances with different orientations
+	int _distance_sensor_selected{-1}; // selected downward-facing DroneCAN rangefinder for flow scaling
 	hrt_abstime _last_range_sensor_update{0};
 
 	bool _delta_angle_available{false};
@@ -141,7 +142,8 @@ private:
 		(ParamFloat<px4::params::SENS_FLOW_MINHGT>) _param_sens_flow_minhgt,
 		(ParamFloat<px4::params::SENS_FLOW_MAXHGT>) _param_sens_flow_maxhgt,
 		(ParamFloat<px4::params::SENS_FLOW_MAXR>) _param_sens_flow_maxr,
-		(ParamFloat<px4::params::SENS_FLOW_RATE>) _param_sens_flow_rate
+		(ParamFloat<px4::params::SENS_FLOW_RATE>) _param_sens_flow_rate,
+		(ParamFloat<px4::params::EKF2_RNG_CAN_MAX>) _param_ekf2_rng_can_max
 	)
 };
 }; // namespace sensors

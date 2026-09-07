@@ -50,6 +50,7 @@
 
 #include <containers/LockGuard.hpp>
 #include <drivers/drv_hrt.h>
+#include <lib/drivers/device/Device.hpp>
 #include <lib/mathlib/mathlib.h>
 #include <lib/perf/perf_counter.h>
 #include <lib/systemlib/mavlink_log.h>
@@ -414,7 +415,16 @@ private:
 
 	uORB::SubscriptionMultiArray<distance_sensor_s> _distance_sensor_subs{ORB_ID::distance_sensor};
 	hrt_abstime _last_range_sensor_update{0};
-	int _distance_sensor_selected{-1}; // because we can have several distance sensor instances with different orientations
+	hrt_abstime _selected_range_sensor_timestamp{0};
+	int _distance_sensor_selected{-1};
+
+	enum class RangeSource : uint8_t {
+		NONE,
+		UAVCAN,
+		MAVLINK,
+	};
+
+	RangeSource _range_source{RangeSource::NONE};
 #endif // CONFIG_EKF2_RANGE_FINDER
 
 	bool _callback_registered{false};
@@ -636,6 +646,8 @@ private:
 		(ParamExtFloat<px4::params::EKF2_RNG_A_IGATE>) _param_ekf2_rng_a_igate,
 		(ParamExtFloat<px4::params::EKF2_RNG_QLTY_T>) _param_ekf2_rng_qlty_t,
 		(ParamExtFloat<px4::params::EKF2_RNG_K_GATE>) _param_ekf2_rng_k_gate,
+		(ParamFloat<px4::params::EKF2_RNG_CAN_MAX>) _param_ekf2_rng_can_max,
+		(ParamFloat<px4::params::EKF2_RNG_MAV_MAX>) _param_ekf2_rng_mav_max,
 		(ParamExtFloat<px4::params::EKF2_RNG_POS_X>) _param_ekf2_rng_pos_x,
 		(ParamExtFloat<px4::params::EKF2_RNG_POS_Y>) _param_ekf2_rng_pos_y,
 		(ParamExtFloat<px4::params::EKF2_RNG_POS_Z>) _param_ekf2_rng_pos_z,

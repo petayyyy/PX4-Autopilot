@@ -1,0 +1,15 @@
+# H-Flow on CAN1 + SF30/D via MAVLink range-selection profile.
+#
+# Apply after flashing px4_fmu-v6x_default.px4. Review CAN bitrate/node setup
+# against the rest of the vehicle before applying on a shared CAN network.
+#
+# Vehicle-Id Component-Id Name Value Type
+1	1	UAVCAN_ENABLE	2	6
+1	1	UAVCAN_RNG_MIN	0.10	9
+1	1	UAVCAN_RNG_MAX	30.0	9
+1	1	EKF2_OF_CTRL	1	6
+1	1	SENS_FLOW_MAXHGT	20.0	9
+1	1	EKF2_RNG_CAN_MAX	20.0	9
+1	1	EKF2_RNG_MAV_MAX	200.0	9
+1	1	EKF2_RNG_CTRL	2	6
+1	1	EKF2_HGT_REF	2	6

@@ -2352,7 +2352,13 @@ bool EKF2::UpdateFlowSample(ekf2_timestamps_s &ekf2_timestamps)
 			.quality = optical_flow.quality
 		};
 
-		if (Vector2f(optical_flow.pixel_flow).isAllFinite() && optical_flow.integration_timespan_us < 1e6) {
+		const bool flow_height_within_limit = !_ekf.isTerrainEstimateValid()
+			|| !PX4_ISFINITE(optical_flow.max_ground_distance)
+			|| ((_ekf.getTerrainVertPos() - _ekf.getPosition()(2)) <= optical_flow.max_ground_distance);
+
+		if (Vector2f(optical_flow.pixel_flow).isAllFinite()
+		    && optical_flow.integration_timespan_us < 1e6
+		    && flow_height_within_limit) {
 
 			// Save sensor limits reported by the optical flow sensor
 			_ekf.set_optical_flow_limits(optical_flow.max_flow_rate, optical_flow.min_ground_distance,
@@ -2474,53 +2480,106 @@ void EKF2::UpdateMagSample(ekf2_timestamps_s &ekf2_timestamps)
 #if defined(CONFIG_EKF2_RANGE_FINDER)
 void EKF2::UpdateRangeSample(ekf2_timestamps_s &ekf2_timestamps)
 {
-	distance_sensor_s distance_sensor;
+	constexpr float kRangeSwitchHysteresis = 0.5f;
+	const hrt_abstime timestamp_stale = math::max(ekf2_timestamps.timestamp, 100_ms) - 100_ms;
 
-	if (_distance_sensor_selected < 0) {
+	distance_sensor_s distance_sensor{};
+	distance_sensor_s selected_distance_sensor{};
+	int can_sensor = -1;
+	int mavlink_sensor = -1;
+	float can_distance = NAN;
 
-		// only consider distance sensors that have updated within the last 0.1s
-		const hrt_abstime timestamp_stale = math::max(ekf2_timestamps.timestamp, 100_ms) - 100_ms;
+	// Prefer the H-Flow DroneCAN rangefinder below its configured range. Above
+	// that range, use the long-range MAVLink sensor. This is deliberately based
+	// on the device bus type instead of uORB instance assignment, which varies
+	// with startup order.
+	if (_distance_sensor_subs.advertised()) {
+		for (unsigned i = 0; i < _distance_sensor_subs.size(); i++) {
+			if (!_distance_sensor_subs[i].copy(&distance_sensor)
+			    || (distance_sensor.timestamp <= timestamp_stale)
+			    || (distance_sensor.orientation != distance_sensor_s::ROTATION_DOWNWARD_FACING)
+			    || (distance_sensor.current_distance < distance_sensor.min_distance)
+			    || (distance_sensor.current_distance > distance_sensor.max_distance)) {
+				continue;
+			}
 
-		if (_distance_sensor_subs.advertised()) {
-			for (unsigned i = 0; i < _distance_sensor_subs.size(); i++) {
+			device::Device::DeviceId device_id{};
+			device_id.devid = distance_sensor.device_id;
 
-				if (_distance_sensor_subs[i].update(&distance_sensor)) {
-					// only use the first instace which has the correct orientation
-					if ((distance_sensor.timestamp != 0) && (distance_sensor.timestamp > timestamp_stale)
-					    && (distance_sensor.orientation == distance_sensor_s::ROTATION_DOWNWARD_FACING)) {
+			if ((device_id.devid_s.bus_type == device::Device::DeviceBusType::DeviceBusType_UAVCAN)
+			    && (distance_sensor.current_distance <= _param_ekf2_rng_can_max.get())) {
+				can_sensor = i;
+				can_distance = distance_sensor.current_distance;
 
-						int ndist = orb_group_count(ORB_ID(distance_sensor));
-
-						if (ndist > 1) {
-							PX4_INFO("%d - selected distance_sensor:%d (%d advertised)", _instance, i, ndist);
-						}
-
-						_distance_sensor_selected = i;
-						_last_range_sensor_update = distance_sensor.timestamp;
-						break;
-					}
-				}
+			} else if ((device_id.devid_s.bus_type == device::Device::DeviceBusType::DeviceBusType_MAVLINK)
+				   && (distance_sensor.current_distance <= _param_ekf2_rng_mav_max.get())) {
+				mavlink_sensor = i;
 			}
 		}
 	}
 
-	if (_distance_sensor_selected >= 0 && _distance_sensor_subs[_distance_sensor_selected].update(&distance_sensor)) {
-		// EKF range sample
-		if (distance_sensor.orientation == distance_sensor_s::ROTATION_DOWNWARD_FACING) {
-			rangeSample range_sample {
-				.time_us = distance_sensor.timestamp,
-				.rng = distance_sensor.current_distance,
-				.quality = distance_sensor.signal_quality,
-			};
-			_ekf.setRangeData(range_sample);
+	const float can_reentry_limit = fmaxf(0.f, _param_ekf2_rng_can_max.get() - kRangeSwitchHysteresis);
+	const bool can_selected = (can_sensor >= 0)
+		&& ((_range_source != RangeSource::MAVLINK) || (can_distance <= can_reentry_limit));
 
-			// Save sensor limits reported by the rangefinder
-			_ekf.set_rangefinder_limits(distance_sensor.min_distance, distance_sensor.max_distance);
+	const int selected_sensor = can_selected ? can_sensor : mavlink_sensor;
+	const RangeSource selected_source = can_selected ? RangeSource::UAVCAN
+			: (mavlink_sensor >= 0 ? RangeSource::MAVLINK : RangeSource::NONE);
 
-			_last_range_sensor_update = ekf2_timestamps.timestamp;
+	if (selected_sensor != _distance_sensor_selected) {
+		if (selected_sensor >= 0) {
+			PX4_INFO("%d - selected %s distance_sensor:%d", _instance,
+				 selected_source == RangeSource::UAVCAN ? "UAVCAN" : "MAVLink", selected_sensor);
 		}
 
-		ekf2_timestamps.distance_sensor_timestamp_rel = (int16_t)((int64_t)distance_sensor.timestamp / 100 -
+		_distance_sensor_selected = selected_sensor;
+		_range_source = selected_source;
+		_selected_range_sensor_timestamp = 0;
+	}
+
+	if (_distance_sensor_selected >= 0) {
+		// Use the sample already inspected above. Calling update() here would
+		// consume only a newly-arrived sample and could drop the valid snapshot.
+		_distance_sensor_subs[_distance_sensor_selected].copy(&selected_distance_sensor);
+
+		device::Device::DeviceId device_id{};
+		device_id.devid = selected_distance_sensor.device_id;
+		const bool selected_source_in_range =
+			((device_id.devid_s.bus_type == device::Device::DeviceBusType::DeviceBusType_UAVCAN)
+			 && (selected_distance_sensor.current_distance <= _param_ekf2_rng_can_max.get()))
+			|| ((device_id.devid_s.bus_type == device::Device::DeviceBusType::DeviceBusType_MAVLINK)
+			    && (selected_distance_sensor.current_distance <= _param_ekf2_rng_mav_max.get()));
+
+		if (!selected_source_in_range
+		    || (selected_distance_sensor.timestamp <= timestamp_stale)
+		    || (selected_distance_sensor.orientation != distance_sensor_s::ROTATION_DOWNWARD_FACING)
+		    || (selected_distance_sensor.current_distance < selected_distance_sensor.min_distance)
+		    || (selected_distance_sensor.current_distance > selected_distance_sensor.max_distance)) {
+			_distance_sensor_selected = -1;
+			_range_source = RangeSource::NONE;
+			return;
+		}
+
+		if (selected_distance_sensor.timestamp <= _selected_range_sensor_timestamp) {
+			return;
+		}
+
+		// EKF range sample
+		rangeSample range_sample {
+			.time_us = selected_distance_sensor.timestamp,
+			.rng = selected_distance_sensor.current_distance,
+			.quality = selected_distance_sensor.signal_quality,
+		};
+		_ekf.setRangeData(range_sample);
+
+		// Save sensor limits reported by the selected rangefinder.
+		_ekf.set_rangefinder_limits(selected_distance_sensor.min_distance,
+						    selected_distance_sensor.max_distance);
+
+		_last_range_sensor_update = ekf2_timestamps.timestamp;
+		_selected_range_sensor_timestamp = selected_distance_sensor.timestamp;
+
+		ekf2_timestamps.distance_sensor_timestamp_rel = (int16_t)((int64_t)selected_distance_sensor.timestamp / 100 -
 				(int64_t)ekf2_timestamps.timestamp / 100);
 	}
 
