@@ -28,6 +28,17 @@ publications:
     type: px4_msgs::msg::EstimatorStatusFlags
     rate_limit: 5.
 
+  - topic: /fmu/out/hover_thrust_estimate
+    type: px4_msgs::msg::HoverThrustEstimate
+    rate_limit: 10.
+
+  - topic: /fmu/out/input_rc
+    type: px4_msgs::msg::InputRc
+    rate_limit: 20.
+
+  - topic: /fmu/out/log_message
+    type: px4_msgs::msg::LogMessage
+
   - topic: /fmu/out/failsafe_flags
     type: px4_msgs::msg::FailsafeFlags
     rate_limit: 5.
