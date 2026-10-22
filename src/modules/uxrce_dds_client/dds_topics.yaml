@@ -11,6 +11,14 @@
 #####
 publications:
 
+  # Native Gigaobrik MTF-01 simulation outputs.
+  # The sensor data is produced by PX4's Gazebo bridge, not by a ROS node.
+  - topic: /fmu/out/distance_sensor
+    type: px4_msgs::msg::DistanceSensor
+
+  - topic: /fmu/out/vehicle_optical_flow_vel
+    type: px4_msgs::msg::VehicleOpticalFlowVel
+
   - topic: /fmu/out/register_ext_component_reply
     type: px4_msgs::msg::RegisterExtComponentReply
 
@@ -123,6 +131,9 @@ publications:
 
 # Create uORB::Publication
 subscriptions:
+  - topic: /fmu/in/distance_sensor
+    type: px4_msgs::msg::DistanceSensor
+
   - topic: /fmu/in/register_ext_component_request
     type: px4_msgs::msg::RegisterExtComponentRequest
 
@@ -156,8 +167,8 @@ subscriptions:
   # - topic: /fmu/in/obstacle_distance
   #   type: px4_msgs::msg::ObstacleDistance
 
-  # - topic: /fmu/in/sensor_optical_flow
-  #   type: px4_msgs::msg::SensorOpticalFlow
+  - topic: /fmu/in/sensor_optical_flow
+    type: px4_msgs::msg::SensorOpticalFlow
 
   # - topic: /fmu/in/goto_setpoint
   #   type: px4_msgs::msg::GotoSetpoint
