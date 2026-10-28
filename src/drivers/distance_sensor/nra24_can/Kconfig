@@ -1,0 +1,6 @@
+menuconfig DRIVERS_DISTANCE_SENSOR_NRA24_CAN
+    bool "nra24_can"
+    depends on DRIVERS_UAVCAN
+    default n
+    ---help---
+        Nanoradar NRA24 native classic CAN rangefinder for single-port STM32H7 boards.

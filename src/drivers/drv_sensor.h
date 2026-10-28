@@ -241,6 +241,8 @@
 
 #define DRV_BARO_DEVTYPE_SPA06          0xE8
 
+#define DRV_DIST_DEVTYPE_NRA24 0xE5
+
 #define DRV_DEVTYPE_UNUSED		0xff
 
 #endif /* _DRV_SENSOR_H */

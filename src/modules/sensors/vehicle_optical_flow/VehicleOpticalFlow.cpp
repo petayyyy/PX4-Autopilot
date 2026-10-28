@@ -32,6 +32,8 @@
  ****************************************************************************/
 
 #include "VehicleOpticalFlow.hpp"
+#include "FlowSourceSelection.hpp"
+#include <drivers/drv_sensor.h>
 
 #include <px4_platform_common/log.h>
 
@@ -415,10 +417,10 @@ void VehicleOpticalFlow::UpdateFlowSources()
 	// Classify each advertised sensor_optical_flow instance by device bus type.
 	// This is deliberately based on the device_id bus type instead of the uORB
 	// instance assignment, which varies with startup order.
-	for (uint8_t i = 0; i < _sensor_flow_subs.size(); i++) {
+	for (uint8_t i = 0; i < _sensor_flow_probe_subs.size(); i++) {
 		sensor_optical_flow_s sensor_optical_flow;
 
-		if (_sensor_flow_subs[i].copy(&sensor_optical_flow)
+		if (_sensor_flow_probe_subs[i].copy(&sensor_optical_flow)
 		    && (sensor_optical_flow.timestamp != 0)
 		    && (sensor_optical_flow.device_id != 0)) {
 
@@ -453,7 +455,7 @@ void VehicleOpticalFlow::UpdateFlowSources()
 	};
 
 	const bool primary_fresh = source_fresh(primary_source);
-	const bool secondary_fresh = source_fresh(secondary_source);
+	const bool secondary_fresh = (_param_sens_flow_fback.get() != 0) && source_fresh(secondary_source);
 
 	// Track how long the primary source has been continuously fresh so the
 	// return to primary from the fallback source can be debounced.
@@ -463,24 +465,9 @@ void VehicleOpticalFlow::UpdateFlowSources()
 
 	_flow_primary_was_fresh = primary_fresh;
 
-	FlowSource desired_source = FlowSource::NONE;
-
-	if (primary_fresh) {
-		desired_source = primary_source;
-
-	} else if (secondary_fresh) {
-		desired_source = secondary_source;
-	}
-
-	// Debounce the return to primary while the secondary source is still fresh,
-	// so the selection does not flap between the two sensors.
-	if ((desired_source == primary_source)
-	    && (_flow_source == secondary_source)
-	    && secondary_fresh
-	    && (hrt_elapsed_time(&_flow_primary_fresh_since) < FLOW_SOURCE_SWITCH_DEBOUNCE)) {
-
-		desired_source = secondary_source;
-	}
+	const FlowSource desired_source = flow_selection::choose(primary_source, secondary_source,
+					  _flow_source, primary_fresh, secondary_fresh, _param_sens_flow_fback.get() != 0,
+					  hrt_elapsed_time(&_flow_primary_fresh_since) >= FLOW_SOURCE_SWITCH_DEBOUNCE);
 
 	if (desired_source != _flow_source) {
 		_flow_source = desired_source;
@@ -531,7 +518,8 @@ void VehicleOpticalFlow::UpdateDistanceSensor()
 				// the long-range MAVLink rangefinder selected by EKF2.
 				if ((hrt_elapsed_time(&distance_sensor.timestamp) < 100_ms)
 				    && (distance_sensor.orientation == distance_sensor_s::ROTATION_DOWNWARD_FACING)
-				    && (device_id.devid_s.bus_type == device::Device::DeviceBusType::DeviceBusType_UAVCAN)) {
+				    && (device_id.devid_s.bus_type == device::Device::DeviceBusType::DeviceBusType_UAVCAN)
+				    && (device_id.devid_s.devtype != DRV_DIST_DEVTYPE_NRA24)) {
 
 					int ndist = orb_group_count(ORB_ID(distance_sensor));
 

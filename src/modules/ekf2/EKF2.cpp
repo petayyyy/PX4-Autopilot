@@ -33,6 +33,7 @@
 
 #include <px4_platform_common/events.h>
 #include "EKF2.hpp"
+#include <drivers/drv_sensor.h>
 
 using namespace time_literals;
 using math::constrain;
@@ -2353,8 +2354,8 @@ bool EKF2::UpdateFlowSample(ekf2_timestamps_s &ekf2_timestamps)
 		};
 
 		const bool flow_height_within_limit = !_ekf.isTerrainEstimateValid()
-			|| !PX4_ISFINITE(optical_flow.max_ground_distance)
-			|| ((_ekf.getTerrainVertPos() - _ekf.getPosition()(2)) <= optical_flow.max_ground_distance);
+						      || !PX4_ISFINITE(optical_flow.max_ground_distance)
+						      || ((_ekf.getTerrainVertPos() - _ekf.getPosition()(2)) <= optical_flow.max_ground_distance);
 
 		if (Vector2f(optical_flow.pixel_flow).isAllFinite()
 		    && optical_flow.integration_timespan_us < 1e6
@@ -2480,167 +2481,75 @@ void EKF2::UpdateMagSample(ekf2_timestamps_s &ekf2_timestamps)
 #if defined(CONFIG_EKF2_RANGE_FINDER)
 void EKF2::UpdateRangeSample(ekf2_timestamps_s &ekf2_timestamps)
 {
-	// Minimum interval between voluntary source switches. Switching away from a
-	// fully failed source (stale sample or out-of-range distance) is never
-	// delayed by this debounce.
-	constexpr hrt_abstime kRangeSwitchDebounce = 1_s;
-
-	// Per-source freshness timeouts. The DroneCAN long-range sensor publishes at
-	// ~3 Hz and the MAVLink sensor at ~1 Hz, so a single short staleness window
-	// (previously 100 ms) caused constant CAN<->MAVLink<->NONE bouncing.
-	const hrt_abstime can_timeout = (hrt_abstime)(_param_ekf2_rng_can_to.get() * 1_s);
+	const hrt_abstime now = ekf2_timestamps.timestamp;
+	const hrt_abstime short_timeout = (hrt_abstime)(_param_ekf2_rng_can_to.get() * 1_s);
 	const hrt_abstime mavlink_timeout = (hrt_abstime)(_param_ekf2_rng_mav_to.get() * 1_s);
-	const hrt_abstime can_timestamp_stale = math::max(ekf2_timestamps.timestamp, can_timeout) - can_timeout;
-	const hrt_abstime mavlink_timestamp_stale = math::max(ekf2_timestamps.timestamp,
-			mavlink_timeout) - mavlink_timeout;
+	const hrt_abstime radar_timeout = (hrt_abstime)(_param_ekf2_rng_rad_to.get() * 1_s);
+	range_selection::Candidate short_candidate{}, long_candidate{};
+	distance_sensor_s short_sample{}, long_sample{};
 
-	distance_sensor_s distance_sensor{};
-	distance_sensor_s selected_distance_sensor{};
-	int can_sensor = -1;
-	int mavlink_sensor = -1;
-	float can_distance = NAN;
+	for (unsigned i = 0; i < _distance_sensor_subs.size(); ++i) {
+		distance_sensor_s sample{};
 
-	// Prefer the H-Flow DroneCAN rangefinder below its configured range. Above
-	// that range, use the long-range MAVLink sensor. This is deliberately based
-	// on the device bus type instead of uORB instance assignment, which varies
-	// with startup order.
-	//
-	// A source is considered available only while its latest sample is younger
-	// than its own freshness timeout.
-	if (_distance_sensor_subs.advertised()) {
-		for (unsigned i = 0; i < _distance_sensor_subs.size(); i++) {
-			if (!_distance_sensor_subs[i].copy(&distance_sensor)
-			    || (distance_sensor.orientation != distance_sensor_s::ROTATION_DOWNWARD_FACING)
-			    || (distance_sensor.current_distance < distance_sensor.min_distance)
-			    || (distance_sensor.current_distance > distance_sensor.max_distance)) {
-				continue;
+		if (!_distance_sensor_subs[i].copy(&sample)
+		    || sample.orientation != distance_sensor_s::ROTATION_DOWNWARD_FACING) { continue; }
+
+		device::Device::DeviceId id{};
+		id.devid = sample.device_id;
+		const bool is_can = id.devid_s.bus_type == device::Device::DeviceBusType_UAVCAN;
+		const bool is_radar = is_can && id.devid_s.devtype == DRV_DIST_DEVTYPE_NRA24;
+		const bool is_mavlink = id.devid_s.bus_type == device::Device::DeviceBusType_MAVLINK;
+
+		if (!is_can && !is_mavlink) { continue; }
+
+		const hrt_abstime timeout = is_radar ? radar_timeout : (is_can ? short_timeout : mavlink_timeout);
+
+		if (!range_selection::valid(now, sample.timestamp, timeout, sample.current_distance,
+					    sample.min_distance, sample.max_distance, sample.signal_quality)) { continue; }
+
+		if (is_radar || is_mavlink) {
+			if (sample.current_distance <= _param_ekf2_rng_mav_max.get()
+			    && sample.timestamp > long_candidate.timestamp) {
+				long_candidate = {int(i), sample.timestamp, sample.current_distance};
+				long_sample = sample;
 			}
 
-			device::Device::DeviceId device_id{};
-			device_id.devid = distance_sensor.device_id;
-
-			if (device_id.devid_s.bus_type == device::Device::DeviceBusType::DeviceBusType_UAVCAN) {
-				if (distance_sensor.timestamp > can_timestamp_stale) {
-					can_sensor = i;
-					can_distance = distance_sensor.current_distance;
-				}
-
-			} else if ((device_id.devid_s.bus_type == device::Device::DeviceBusType::DeviceBusType_MAVLINK)
-				   && (distance_sensor.timestamp > mavlink_timestamp_stale)
-				   && (distance_sensor.current_distance <= _param_ekf2_rng_mav_max.get())) {
-				mavlink_sensor = i;
-			}
+		} else if (sample.timestamp > short_candidate.timestamp) {
+			short_candidate = {int(i), sample.timestamp, sample.current_distance};
+			short_sample = sample;
 		}
 	}
 
-	// CAN distance thresholds with hysteresis: leave CAN once its distance
-	// exceeds the limit, and re-enter only once it drops back below the limit
-	// minus the hysteresis value.
-	const float can_reentry_limit = fmaxf(0.f,
-					      _param_ekf2_rng_can_max.get() - _param_ekf2_rng_can_hys.get());
-	const bool can_in_range = (can_sensor >= 0)
-				  && (can_distance <= _param_ekf2_rng_can_max.get());
-	const bool can_in_hysteresis = (can_sensor >= 0)
-				       && (can_distance <= can_reentry_limit);
+	const auto selected = _range_selector.choose(now, short_candidate, long_candidate,
+			      _param_ekf2_rng_can_max.get(), _param_ekf2_rng_can_hys.get());
 
-	// Preferred source given the current state.
-	RangeSource desired_source = RangeSource::NONE;
-	int desired_sensor = -1;
+	if (selected.index != _distance_sensor_selected || selected.source != _range_source) {
+		_distance_sensor_selected = selected.index;
+		_range_source = selected.source;
 
-	if (_range_source == RangeSource::MAVLINK) {
-		if (can_in_hysteresis) {
-			desired_source = RangeSource::UAVCAN;
-			desired_sensor = can_sensor;
-
-		} else if (mavlink_sensor >= 0) {
-			desired_source = RangeSource::MAVLINK;
-			desired_sensor = mavlink_sensor;
-		}
-
-	} else {
-		// UAVCAN or NONE: prefer CAN while it is in range, otherwise MAVLink.
-		if (can_in_range) {
-			desired_source = RangeSource::UAVCAN;
-			desired_sensor = can_sensor;
-
-		} else if (mavlink_sensor >= 0) {
-			desired_source = RangeSource::MAVLINK;
-			desired_sensor = mavlink_sensor;
+		if (now - _last_range_source_log >= 1_s) {
+			PX4_INFO("%d - selected %s distance_sensor:%d", _instance,
+				 selected.source == range_selection::Source::SHORT_RANGE ? "short-range CAN" :
+				 (selected.source == range_selection::Source::LONG_RANGE ? "long-range radar/MAVLink" : "none"),
+				 selected.index);
+			_last_range_source_log = now;
 		}
 	}
 
-	// The current source is healthy while it still has a fresh, in-range sample.
-	const bool current_source_healthy =
-		((_range_source == RangeSource::UAVCAN) && can_in_range)
-		|| ((_range_source == RangeSource::MAVLINK) && (mavlink_sensor >= 0));
+	if (selected.index < 0) { return; }
 
-	const bool source_changed = (desired_sensor != _distance_sensor_selected)
-				    || (desired_source != _range_source);
+	const auto &sample = selected.source == range_selection::Source::SHORT_RANGE ? short_sample : long_sample;
 
-	if (source_changed) {
-		// Switch immediately when the current source has fully failed, otherwise
-		// debounce to avoid oscillating between two still-valid sources.
-		const bool debounce_elapsed = (ekf2_timestamps.timestamp - _last_range_source_switch) >= kRangeSwitchDebounce;
+	// Per-instance timestamps permit a handover to a slightly older but still
+	// fresh sensor without feeding either sensor's same sample repeatedly.
+	if (sample.timestamp <= _range_sensor_forwarded[selected.index]) { return; }
 
-		if (!current_source_healthy || debounce_elapsed) {
-			_distance_sensor_selected = desired_sensor;
-			_range_source = desired_source;
-			_last_range_source_switch = ekf2_timestamps.timestamp;
-
-			// Log only an actually applied switch, at most once per second.
-			if ((desired_sensor >= 0)
-			    && ((ekf2_timestamps.timestamp - _last_range_source_log) >= 1_s)) {
-				PX4_INFO("%d - selected %s distance_sensor:%d", _instance,
-					 desired_source == RangeSource::UAVCAN ? "UAVCAN" : "MAVLink", desired_sensor);
-				_last_range_source_log = ekf2_timestamps.timestamp;
-			}
-		}
-	}
-
-	if (_distance_sensor_selected >= 0) {
-		// Use the sample already inspected above. Calling update() here would
-		// consume only a newly-arrived sample and could drop the valid snapshot.
-		_distance_sensor_subs[_distance_sensor_selected].copy(&selected_distance_sensor);
-
-		device::Device::DeviceId device_id{};
-		device_id.devid = selected_distance_sensor.device_id;
-		const bool is_can = device_id.devid_s.bus_type == device::Device::DeviceBusType::DeviceBusType_UAVCAN;
-		const hrt_abstime selected_timestamp_stale = is_can ? can_timestamp_stale : mavlink_timestamp_stale;
-		const bool selected_source_in_range = is_can
-						      ? (selected_distance_sensor.current_distance <= _param_ekf2_rng_can_max.get())
-						      : (selected_distance_sensor.current_distance <= _param_ekf2_rng_mav_max.get());
-
-		// Do not feed stale or invalid data, and never feed the same sample
-		// twice. If the selected source has failed, the selection logic above
-		// switches source on the next iteration; here we simply wait for a fresh
-		// sample instead of feeding a stale one.
-		if (!selected_source_in_range
-		    || (selected_distance_sensor.timestamp <= selected_timestamp_stale)
-		    || (selected_distance_sensor.orientation != distance_sensor_s::ROTATION_DOWNWARD_FACING)
-		    || (selected_distance_sensor.current_distance < selected_distance_sensor.min_distance)
-		    || (selected_distance_sensor.current_distance > selected_distance_sensor.max_distance)
-		    || (selected_distance_sensor.timestamp <= _selected_range_sensor_timestamp)) {
-			return;
-		}
-
-		// EKF range sample
-		rangeSample range_sample {
-			.time_us = selected_distance_sensor.timestamp,
-			.rng = selected_distance_sensor.current_distance,
-			.quality = selected_distance_sensor.signal_quality,
-		};
-		_ekf.setRangeData(range_sample);
-
-		// Save sensor limits reported by the selected rangefinder.
-		_ekf.set_rangefinder_limits(selected_distance_sensor.min_distance,
-					    selected_distance_sensor.max_distance);
-
-		_last_range_sensor_update = ekf2_timestamps.timestamp;
-		_selected_range_sensor_timestamp = selected_distance_sensor.timestamp;
-
-		ekf2_timestamps.distance_sensor_timestamp_rel = (int16_t)((int64_t)selected_distance_sensor.timestamp / 100 -
-				(int64_t)ekf2_timestamps.timestamp / 100);
-	}
+	_ekf.setRangeData(rangeSample{sample.timestamp, sample.current_distance, sample.signal_quality});
+	_ekf.set_rangefinder_limits(sample.min_distance, sample.max_distance);
+	_range_sensor_forwarded[selected.index] = sample.timestamp;
+	_last_range_sensor_update = now;
+	ekf2_timestamps.distance_sensor_timestamp_rel = (int16_t)((int64_t)sample.timestamp / 100 -
+			(int64_t)now / 100);
 }
 #endif // CONFIG_EKF2_RANGE_FINDER
 

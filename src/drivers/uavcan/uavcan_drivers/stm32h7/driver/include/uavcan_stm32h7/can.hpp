@@ -282,7 +282,8 @@ public:
 	 * Returns zero if OK.
 	 * Returns negative value if failed (e.g. invalid bitrate).
 	 */
-	int init(const uavcan::uint32_t bitrate, const CanIface::OperatingMode mode, const uavcan::uint32_t EnabledInterfaces);
+	int init(const uavcan::uint32_t bitrate, const CanIface::OperatingMode mode, const uavcan::uint32_t EnabledInterfaces,
+		 uavcan::uint32_t second_bitrate = 0);
 
 	virtual CanIface *getIface(uavcan::uint8_t iface_index);
 

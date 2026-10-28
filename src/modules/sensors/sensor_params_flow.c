@@ -164,3 +164,15 @@ PARAM_DEFINE_FLOAT(SENS_FLOW_RATE, 70.0f);
  * @group Sensors
  */
 PARAM_DEFINE_FLOAT(SENS_FLOW_TO, 1.0f);
+
+/**
+ * Enable optical flow source fallback
+ *
+ * When disabled, only the source chosen by SENS_FLOW_PRIME is used. If that
+ * source stops updating, optical flow becomes unavailable. No secondary
+ * optical flow source is substituted. Rangefinder selection is independent.
+ *
+ * @boolean
+ * @group Sensors
+ */
+PARAM_DEFINE_INT32(SENS_FLOW_FBACK, 1);

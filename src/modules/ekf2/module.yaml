@@ -622,7 +622,7 @@ parameters:
         short: Maximum CAN rangefinder distance
         long: Use a downward-facing DroneCAN rangefinder only while its reported
           distance is at or below this limit. When it exceeds the limit, the
-          estimator switches to a valid MAVLink rangefinder if available.
+          estimator switches to a valid NRA24 or MAVLink rangefinder if available.
       type: float
       default: 20.0
       min: 0.1
@@ -646,10 +646,10 @@ parameters:
       decimal: 1
     EKF2_RNG_MAV_MAX:
       description:
-        short: Maximum MAVLink rangefinder distance
-        long: Use a downward-facing MAVLink rangefinder only while its reported
+        short: Maximum long-range radar or MAVLink distance
+        long: Use a downward-facing NRA24 or MAVLink rangefinder only while its reported
           distance is at or below this limit. This value should not exceed the
-          maximum distance reported by the MAVLink sensor.
+          maximum distance reported by the selected long-range sensor.
       type: float
       default: 200.0
       min: 0.1
@@ -682,6 +682,17 @@ parameters:
       max: 10.0
       unit: s
       decimal: 1
+    EKF2_RNG_RAD_TO:
+      description:
+        short: Native radar rangefinder freshness timeout
+        long: Maximum age of an NRA24 sample. Invalid or zero-quality samples
+          are rejected immediately independently of this timeout.
+      type: float
+      default: 0.3
+      min: 0.05
+      max: 2.0
+      unit: s
+      decimal: 2
     EKF2_MIN_RNG:
       description:
         short: Expected range finder reading when on ground

@@ -36,6 +36,7 @@
 
 #include <uORB/SubscriptionMultiArray.hpp>
 #include <uORB/topics/distance_sensor.h>
+#include "RadarDistanceEncoding.hpp"
 
 class MavlinkStreamDistanceSensor : public MavlinkStream
 {
@@ -79,6 +80,10 @@ private:
 					msg.type = MAV_DISTANCE_SENSOR_LASER;
 					break;
 
+				case MAV_DISTANCE_SENSOR_RADAR:
+					msg.type = MAV_DISTANCE_SENSOR_RADAR;
+					break;
+
 				case MAV_DISTANCE_SENSOR_INFRARED:
 					msg.type = MAV_DISTANCE_SENSOR_INFRARED;
 					break;
@@ -88,12 +93,25 @@ private:
 					break;
 				}
 
-				msg.current_distance = dist_sensor.current_distance * 1e2f; // m to cm
+				if (dist_sensor.type == MAV_DISTANCE_SENSOR_RADAR) {
+					// NaN is used in uORB for no target/timeouts. Never cast NaN to an integer.
+					// 65535 cm is an out-of-range placeholder, accompanied by invalid quality.
+					const auto encoded = encode_radar_distance(dist_sensor.current_distance, dist_sensor.signal_quality);
+					msg.current_distance = encoded.centimetres;
+					msg.signal_quality = encoded.signal_quality;
+					msg.horizontal_fov = dist_sensor.h_fov;
+					msg.vertical_fov = dist_sensor.v_fov;
+
+				} else {
+					msg.current_distance = dist_sensor.current_distance * 1e2f; // m to cm
+				}
+
 				msg.id               = i;
 				msg.max_distance     = dist_sensor.max_distance * 1e2f;     // m to cm
 				msg.min_distance     = dist_sensor.min_distance * 1e2f;     // m to cm
 				msg.orientation      = dist_sensor.orientation;
-				msg.covariance       = dist_sensor.variance * 1e4f;         // m^2 to cm^2
+				msg.covariance = dist_sensor.type == MAV_DISTANCE_SENSOR_RADAR ?
+						 encode_radar_covariance(dist_sensor.variance) : uint8_t(dist_sensor.variance * 1e4f);
 
 				mavlink_msg_distance_sensor_send_struct(_mavlink->get_channel(), &msg);
 

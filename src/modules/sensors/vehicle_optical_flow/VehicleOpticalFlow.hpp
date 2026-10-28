@@ -112,6 +112,8 @@ private:
 	uORB::Subscription _vehicle_attitude_sub{ORB_ID(vehicle_attitude)};
 
 	uORB::SubscriptionMultiArray<sensor_optical_flow_s> _sensor_flow_subs{ORB_ID::sensor_optical_flow};
+	// Discovery must not consume samples from the processing subscriptions.
+	uORB::SubscriptionMultiArray<sensor_optical_flow_s> _sensor_flow_probe_subs{ORB_ID::sensor_optical_flow};
 
 	uORB::SubscriptionCallbackWorkItem _sensor_gyro_sub{this, ORB_ID(sensor_gyro)};
 	uORB::SubscriptionCallbackWorkItem _sensor_selection_sub{this, ORB_ID(sensor_selection)};
@@ -169,6 +171,7 @@ private:
 		(ParamInt<px4::params::SENS_FLOW_ROT>) _param_sens_flow_rot,
 		(ParamInt<px4::params::SENS_FLOW_ROT_M>) _param_sens_flow_rot_m,
 		(ParamInt<px4::params::SENS_FLOW_PRIME>) _param_sens_flow_prime,
+		(ParamInt<px4::params::SENS_FLOW_FBACK>) _param_sens_flow_fback,
 		(ParamFloat<px4::params::SENS_FLOW_MINHGT>) _param_sens_flow_minhgt,
 		(ParamFloat<px4::params::SENS_FLOW_MAXHGT>) _param_sens_flow_maxhgt,
 		(ParamFloat<px4::params::SENS_FLOW_MAXR>) _param_sens_flow_maxr,

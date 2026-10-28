@@ -232,3 +232,9 @@ then
 	# start last (wait for possible icm20948 passthrough mode)
 	ak09916 -X -q start
 fi
+
+# NRA24 owns CAN1 only; DroneCAN can continue on CAN2.
+if param compare -s SENS_NRA24_EN 1
+then
+    nra24_can start
+fi

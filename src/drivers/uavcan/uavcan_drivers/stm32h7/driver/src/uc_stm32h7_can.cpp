@@ -1166,7 +1166,7 @@ void CanDriver::initOnce()
 }
 
 int CanDriver::init(const uavcan::uint32_t bitrate, const CanIface::OperatingMode mode,
-		    const uavcan::uint32_t enabledInterfaces)
+		    const uavcan::uint32_t enabledInterfaces, const uavcan::uint32_t second_bitrate)
 {
 	int res = 0;
 
@@ -1207,7 +1207,8 @@ int CanDriver::init(const uavcan::uint32_t bitrate, const CanIface::OperatingMod
 		num_ifaces_ = 2;
 		UAVCAN_STM32H7_LOG("Initing iface 1...");
 		ifaces[1] = &if1_;                          // Same thing here.
-		res = if1_.init(bitrate, mode);
+		// Independent nominal timing; the shared FDCAN reset is performed only once.
+		res = if1_.init(second_bitrate ? second_bitrate : bitrate, mode);
 
 		if (res < 0) {
 			UAVCAN_STM32H7_LOG("Iface 1 init failed %i", res);

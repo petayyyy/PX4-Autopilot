@@ -196,3 +196,10 @@ px4_add_module(
 		# within libuavcan
 		uavcan
 	)
+
+if(CONFIG_DRIVERS_DISTANCE_SENSOR_NRA24_CAN)
+    if(NOT UAVCAN_DRIVER STREQUAL "stm32h7" OR NOT config_uavcan_num_ifaces EQUAL 2)
+        message(FATAL_ERROR "NRA24 split CAN currently requires two-interface STM32H7")
+    endif()
+    target_compile_definitions(drivers__uavcan PRIVATE PX4_NRA24_SPLIT_CAN=1)
+endif()

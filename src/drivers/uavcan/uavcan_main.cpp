@@ -75,6 +75,9 @@
 UavcanNode *UavcanNode::_instance;
 
 static UavcanNode::CanInitHelper *can = nullptr;
+#ifdef PX4_NRA24_SPLIT_CAN
+#include "nra24_can_backend.inc"
+#endif
 
 UavcanNode::UavcanNode(uavcan::ICanDriver &can_driver, uavcan::ISystemClock &system_clock) :
 	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::uavcan),
@@ -423,6 +426,13 @@ UavcanNode::start(uavcan::NodeID node_id, uint32_t bitrate)
 		return -1;
 	}
 
+#ifdef PX4_NRA24_SPLIT_CAN
+	uavcan::ICanDriver *dronecan_driver = nra24_can_prepare_dronecan();
+
+	if (!dronecan_driver) { PX4_ERR("CAN initialization failed"); return -1; }
+
+#else
+
 	if (can == nullptr) {
 
 		can = new CanInitHelper(board_get_can_interfaces());
@@ -434,10 +444,13 @@ UavcanNode::start(uavcan::NodeID node_id, uint32_t bitrate)
 
 	}
 
+	uavcan::ICanDriver *dronecan_driver = &can->driver;
+#endif
+
 	/*
 	 * Node init
 	 */
-	_instance = new UavcanNode(can->driver, UAVCAN_DRIVER::SystemClock::instance());
+	_instance = new UavcanNode(*dronecan_driver, UAVCAN_DRIVER::SystemClock::instance());
 
 	if (_instance == nullptr) {
 		PX4_ERR("Out of memory");
@@ -688,7 +701,12 @@ UavcanNode::Run()
 		 * Note that we instantiate and initialize CanInitHelper only once, because the STM32's bxCAN driver
 		 * shipped with libuavcan does not support deinitialization.
 		 */
+#ifdef PX4_NRA24_SPLIT_CAN
+		// Initialized before Node construction, with a fixed logical interface map.
+		const int can_init_res = 0;
+#else
 		const int can_init_res = can->init(bitrate);
+#endif
 
 		if (can_init_res < 0) {
 			PX4_ERR("CAN driver init failed %i", can_init_res);
@@ -1081,7 +1099,11 @@ UavcanNode::print_info()
 
 	// CAN driver status
 	for (unsigned i = 0; i < _node.getDispatcher().getCanIOManager().getCanDriver().getNumIfaces(); i++) {
+#ifdef PX4_NRA24_SPLIT_CAN
+		printf("CAN%u status:\n", unsigned(i + 1 + (native_can_split ? 1 : 0)));
+#else
 		printf("CAN%u status:\n", unsigned(i + 1));
+#endif
 
 		auto iface = _node.getDispatcher().getCanIOManager().getCanDriver().getIface(i);
 
