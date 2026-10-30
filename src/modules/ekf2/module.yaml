@@ -617,12 +617,89 @@ parameters:
       min: 1.0
       unit: SD
       decimal: 1
+    EKF2_RNG_S_ID:
+      description:
+        short: Short-range device ID
+        long: Device ID from distance_sensor, independent of model and transport.
+          Zero disables this role. Short and long IDs must differ. Read once at
+          module startup; reboot after changing. Unassigned devices are ignored.
+      type: int32
+      default: 0
+      reboot_required: true
+    EKF2_RNG_L_ID:
+      description:
+        short: Long-range device ID
+        long: Device ID from distance_sensor, independent of model and transport.
+          Zero disables this role. Short and long IDs must differ. Read once at
+          module startup; reboot after changing. Unassigned devices are ignored.
+      type: int32
+      default: 0
+      reboot_required: true
+    EKF2_RNG_S_MAX:
+      description:
+        short: Maximum short-range selection distance
+        long: Use the assigned downward-facing short-range sensor at or below
+          this distance. Above it select the assigned long-range sensor if usable.
+          Also limits the short-range distance accompanying optical flow.
+      type: float
+      default: 20.0
+      min: 0.1
+      max: 100.0
+      unit: m
+      decimal: 1
+    EKF2_RNG_HYST:
+      description:
+        short: Range source return hysteresis
+        long: Return from long to short at or below EKF2_RNG_S_MAX minus this
+          value. The existing one-second source hold applies while the current
+          source remains usable. Unusable sources are left immediately.
+      type: float
+      default: 2.0
+      min: 0.1
+      max: 10.0
+      unit: m
+      decimal: 1
+    EKF2_RNG_L_MAX:
+      description:
+        short: Maximum long-range selection distance
+        long: Maximum usable distance from the assigned long-range sensor.
+          The sensor's own reported measurement limits also apply.
+      type: float
+      default: 200.0
+      min: 0.1
+      max: 655.35
+      unit: m
+      decimal: 1
+    EKF2_RNG_S_TO:
+      description:
+        short: Short-range freshness timeout
+        long: Maximum age of the assigned short-range sample. The adjusted
+          measurement must also fit the EKF input window. Invalid samples are
+          rejected immediately. Does not change the driver's own timeout.
+      type: float
+      default: 1.0
+      min: 0.05
+      max: 10.0
+      unit: s
+      decimal: 2
+    EKF2_RNG_L_TO:
+      description:
+        short: Long-range freshness timeout
+        long: Maximum age of the assigned long-range sample. The adjusted
+          measurement must also fit the EKF input window. Invalid samples are
+          rejected immediately. Migrate the timeout of the previously used
+          long-range source explicitly; it cannot be inferred from its role.
+      type: float
+      default: 0.3
+      min: 0.05
+      max: 10.0
+      unit: s
+      decimal: 2
     EKF2_RNG_CAN_MAX:
       description:
-        short: Maximum CAN rangefinder distance
-        long: Use a downward-facing DroneCAN rangefinder only while its reported
-          distance is at or below this limit. When it exceeds the limit, the
-          estimator switches to a valid NRA24 or MAVLink rangefinder if available.
+        short: Legacy range selection setting (unused)
+        long: Retained only to preserve old configurations for explicit migration.
+          Use Tools/migrate_range_roles.py and the range role migration guide.
       type: float
       default: 20.0
       min: 0.1
@@ -631,13 +708,9 @@ parameters:
       decimal: 1
     EKF2_RNG_CAN_HYS:
       description:
-        short: DroneCAN rangefinder switch hysteresis
-        long: Hysteresis applied when switching back from the MAVLink rangefinder
-          to the DroneCAN rangefinder. Once the DroneCAN distance exceeds
-          EKF2_RNG_CAN_MAX the MAVLink sensor is selected, and the DroneCAN
-          sensor is only re-selected after its distance falls below
-          EKF2_RNG_CAN_MAX minus this value. This prevents rapid switching when
-          hovering close to the switch threshold.
+        short: Legacy range selection setting (unused)
+        long: Retained only to preserve old configurations for explicit migration.
+          Use Tools/migrate_range_roles.py and the range role migration guide.
       type: float
       default: 2.0
       min: 0.1
@@ -646,10 +719,9 @@ parameters:
       decimal: 1
     EKF2_RNG_MAV_MAX:
       description:
-        short: Maximum long-range radar or MAVLink distance
-        long: Use a downward-facing NRA24 or MAVLink rangefinder only while its reported
-          distance is at or below this limit. This value should not exceed the
-          maximum distance reported by the selected long-range sensor.
+        short: Legacy range selection setting (unused)
+        long: Retained only to preserve old configurations for explicit migration.
+          Use Tools/migrate_range_roles.py and the range role migration guide.
       type: float
       default: 200.0
       min: 0.1
@@ -658,11 +730,9 @@ parameters:
       decimal: 1
     EKF2_RNG_CAN_TO:
       description:
-        short: DroneCAN rangefinder freshness timeout
-        long: Maximum age of a DroneCAN rangefinder sample for it to be
-          considered available. The long-range DroneCAN sensor publishes at
-          roughly 3 Hz, so this must be larger than its sample period. A sample
-          older than this timeout is treated as a full sensor failure.
+        short: Legacy range selection setting (unused)
+        long: Retained only to preserve old configurations for explicit migration.
+          Use Tools/migrate_range_roles.py and the range role migration guide.
       type: float
       default: 1.0
       min: 0.1
@@ -671,11 +741,9 @@ parameters:
       decimal: 1
     EKF2_RNG_MAV_TO:
       description:
-        short: MAVLink rangefinder freshness timeout
-        long: Maximum age of a MAVLink rangefinder sample for it to be
-          considered available. The MAVLink sensor publishes at roughly 1 Hz,
-          so this must be larger than its sample period. A sample older than
-          this timeout is treated as a full sensor failure.
+        short: Legacy range selection setting (unused)
+        long: Retained only to preserve old configurations for explicit migration.
+          Use Tools/migrate_range_roles.py and the range role migration guide.
       type: float
       default: 2.0
       min: 0.1
@@ -684,9 +752,9 @@ parameters:
       decimal: 1
     EKF2_RNG_RAD_TO:
       description:
-        short: Native radar rangefinder freshness timeout
-        long: Maximum age of an NRA24 sample. Invalid or zero-quality samples
-          are rejected immediately independently of this timeout.
+        short: Legacy range selection setting (unused)
+        long: Retained only to preserve old configurations for explicit migration.
+          Use Tools/migrate_range_roles.py and the range role migration guide.
       type: float
       default: 0.3
       min: 0.05

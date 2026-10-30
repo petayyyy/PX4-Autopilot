@@ -421,6 +421,9 @@ private:
 	int _distance_sensor_selected{-1};
 
 	range_selection::Selector _range_selector{};
+	range_sensor::Roles _range_roles{};
+	hrt_abstime _last_range_config_log{0};
+	uint8_t _range_unavailable_mask{0};
 	range_selection::Source _range_source{range_selection::Source::NONE};
 
 #endif // CONFIG_EKF2_RANGE_FINDER
@@ -644,12 +647,13 @@ private:
 		(ParamExtFloat<px4::params::EKF2_RNG_A_IGATE>) _param_ekf2_rng_a_igate,
 		(ParamExtFloat<px4::params::EKF2_RNG_QLTY_T>) _param_ekf2_rng_qlty_t,
 		(ParamExtFloat<px4::params::EKF2_RNG_K_GATE>) _param_ekf2_rng_k_gate,
-		(ParamFloat<px4::params::EKF2_RNG_CAN_MAX>) _param_ekf2_rng_can_max,
-		(ParamFloat<px4::params::EKF2_RNG_CAN_HYS>) _param_ekf2_rng_can_hys,
-		(ParamFloat<px4::params::EKF2_RNG_MAV_MAX>) _param_ekf2_rng_mav_max,
-		(ParamFloat<px4::params::EKF2_RNG_CAN_TO>) _param_ekf2_rng_can_to,
-		(ParamFloat<px4::params::EKF2_RNG_MAV_TO>) _param_ekf2_rng_mav_to,
-		(ParamFloat<px4::params::EKF2_RNG_RAD_TO>) _param_ekf2_rng_rad_to,
+		(ParamInt<px4::params::EKF2_RNG_S_ID>) _param_ekf2_rng_s_id,
+		(ParamInt<px4::params::EKF2_RNG_L_ID>) _param_ekf2_rng_l_id,
+		(ParamFloat<px4::params::EKF2_RNG_S_MAX>) _param_ekf2_rng_s_max,
+		(ParamFloat<px4::params::EKF2_RNG_HYST>) _param_ekf2_rng_hyst,
+		(ParamFloat<px4::params::EKF2_RNG_L_MAX>) _param_ekf2_rng_l_max,
+		(ParamFloat<px4::params::EKF2_RNG_S_TO>) _param_ekf2_rng_s_to,
+		(ParamFloat<px4::params::EKF2_RNG_L_TO>) _param_ekf2_rng_l_to,
 		(ParamExtFloat<px4::params::EKF2_RNG_POS_X>) _param_ekf2_rng_pos_x,
 		(ParamExtFloat<px4::params::EKF2_RNG_POS_Y>) _param_ekf2_rng_pos_y,
 		(ParamExtFloat<px4::params::EKF2_RNG_POS_Z>) _param_ekf2_rng_pos_z,

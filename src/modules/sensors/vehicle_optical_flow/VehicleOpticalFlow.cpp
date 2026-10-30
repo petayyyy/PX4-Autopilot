@@ -33,7 +33,6 @@
 
 #include "VehicleOpticalFlow.hpp"
 #include "FlowSourceSelection.hpp"
-#include <drivers/drv_sensor.h>
 
 #include <px4_platform_common/log.h>
 
@@ -55,6 +54,7 @@ VehicleOpticalFlow::VehicleOpticalFlow() :
 	ModuleParams(nullptr),
 	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::nav_and_controllers)
 {
+	_range_roles = {static_cast<uint32_t>(_param_ekf2_rng_s_id.get()), static_cast<uint32_t>(_param_ekf2_rng_l_id.get())};
 	_vehicle_optical_flow_pub.advertise();
 
 	_gyro_integrator.set_reset_samples(1);
@@ -195,9 +195,11 @@ void VehicleOpticalFlow::Run()
 			}
 
 			// distance
-			//  - from sensor_optical_flow if available, otherwise use downward distance_sensor if available
-			if (sensor_optical_flow.distance_available && PX4_ISFINITE(sensor_optical_flow.distance_m)
-			    && (sensor_optical_flow.distance_m <= _param_ekf2_rng_can_max.get())) {
+			// Explicit range roles use the configured short-range device. Embedded
+			// distance remains supported for flow-only setups with no range roles.
+			if (_range_roles.allowEmbeddedFlowRange() && sensor_optical_flow.distance_available
+			    && PX4_ISFINITE(sensor_optical_flow.distance_m)
+			    && (sensor_optical_flow.distance_m <= _param_ekf2_rng_s_max.get())) {
 				if (!PX4_ISFINITE(_distance_sum)) {
 					_distance_sum = sensor_optical_flow.distance_m;
 					_distance_sum_count = 1;
@@ -504,63 +506,39 @@ void VehicleOpticalFlow::UpdateFlowSources()
 
 void VehicleOpticalFlow::UpdateDistanceSensor()
 {
-	// update range finder buffer
-	distance_sensor_s distance_sensor;
+	const hrt_abstime now = hrt_absolute_time();
+	const hrt_abstime timeout = (hrt_abstime)(_param_ekf2_rng_s_to.get() * 1_s);
+	range_sensor::UniqueInstance match;
+	distance_sensor_s selected{};
 
-	if ((_distance_sensor_selected < 0) && _distance_sensor_subs.advertised()) {
-		for (unsigned i = 0; i < _distance_sensor_subs.size(); i++) {
+	for (unsigned i = 0; i < _distance_sensor_subs.size(); ++i) {
+		distance_sensor_s sample{};
 
-			if (_distance_sensor_subs[i].update(&distance_sensor)) {
-				device::Device::DeviceId device_id{};
-				device_id.devid = distance_sensor.device_id;
-
-				// Flow scaling must use the H-Flow's DroneCAN rangefinder, never
-				// the long-range MAVLink rangefinder selected by EKF2.
-				if ((hrt_elapsed_time(&distance_sensor.timestamp) < 100_ms)
-				    && (distance_sensor.orientation == distance_sensor_s::ROTATION_DOWNWARD_FACING)
-				    && (device_id.devid_s.bus_type == device::Device::DeviceBusType::DeviceBusType_UAVCAN)
-				    && (device_id.devid_s.devtype != DRV_DIST_DEVTYPE_NRA24)) {
-
-					int ndist = orb_group_count(ORB_ID(distance_sensor));
-
-					if (ndist > 1) {
-						PX4_INFO("selected distance_sensor:%d (%d advertised)", i, ndist);
-					}
-
-					_distance_sensor_selected = i;
-					_last_range_sensor_update = distance_sensor.timestamp;
-					break;
-				}
-			}
+		if (_distance_sensor_subs[i].copy(&sample)
+		    && _range_roles.classify(sample.device_id) == range_sensor::Role::SHORT
+		    && sample.orientation == distance_sensor_s::ROTATION_DOWNWARD_FACING
+		    && sample.current_distance <= _param_ekf2_rng_s_max.get()
+		    && range_sensor::validSample(now, sample.timestamp, timeout, sample.current_distance,
+						 sample.min_distance, sample.max_distance, sample.signal_quality)) {
+			match.add(i);
+			selected = sample;
 		}
 	}
 
-	if (_distance_sensor_selected >= 0 && _distance_sensor_subs[_distance_sensor_selected].update(&distance_sensor)) {
-		// range sample
-		if (distance_sensor.orientation == distance_sensor_s::ROTATION_DOWNWARD_FACING) {
-
-			if ((distance_sensor.current_distance >= distance_sensor.min_distance)
-			    && (distance_sensor.current_distance <= distance_sensor.max_distance)
-			    && (distance_sensor.current_distance <= _param_ekf2_rng_can_max.get())) {
-
-				rangeSample sample;
-				sample.time_us = distance_sensor.timestamp;
-				sample.data = distance_sensor.current_distance;
-
-				_range_buffer.push(sample);
-
-				_last_range_sensor_update = distance_sensor.timestamp;
-
-				return;
-			}
-
-		} else {
-			_distance_sensor_selected = -1;
-		}
-	}
-
-	if (hrt_elapsed_time(&_last_range_sensor_update) > 1_s) {
+	if (match.index() < 0) {
 		_distance_sensor_selected = -1;
+		_range_buffer = {};
+		return;
+	}
+
+	if (_distance_sensor_selected != match.index()) {
+		_distance_sensor_selected = match.index();
+		PX4_INFO("flow range device %" PRIu32 " distance_sensor:%d", _range_roles.short_id, _distance_sensor_selected);
+	}
+
+	if (selected.timestamp > _last_range_sensor_update) {
+		_range_buffer.push(rangeSample{selected.timestamp, selected.current_distance});
+		_last_range_sensor_update = selected.timestamp;
 	}
 }
 
@@ -646,7 +624,10 @@ void VehicleOpticalFlow::ClearAccumulatedData()
 
 void VehicleOpticalFlow::PrintStatus()
 {
-
+	PX4_INFO_RAW("flow range role (startup): short=%" PRIu32 " long=%" PRIu32 ", valid=%d instance=%d\n",
+		     _range_roles.short_id, _range_roles.long_id, _range_roles.valid(), _distance_sensor_selected);
+	PX4_INFO_RAW("embedded flow range allowed: %d; range ID changes require reboot\n",
+		     _range_roles.allowEmbeddedFlowRange());
 }
 
 }; // namespace sensors

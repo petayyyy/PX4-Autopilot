@@ -2,6 +2,7 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include <lib/sensor_selection/RangeSensorRoles.hpp>
 
 namespace range_selection
 {
@@ -14,13 +15,7 @@ struct Candidate {
 inline bool valid(uint64_t now, uint64_t timestamp, uint64_t timeout,
 		  float distance, float minimum, float maximum, int quality)
 {
-	// A newly published sample can be slightly newer than the triggering IMU
-	// sample (or be published between reading 'now' and copying the topic).
-	const bool fresh = timestamp > now ? timestamp - now <= 100000 : now - timestamp <= timeout;
-	return timestamp != 0 && fresh
-	       && quality != 0 && std::isfinite(distance) && std::isfinite(minimum)
-	       && std::isfinite(maximum) && minimum >= 0.f && maximum > minimum
-	       && distance >= minimum && distance <= maximum;
+	return range_sensor::validSample(now, timestamp, timeout, distance, minimum, maximum, quality);
 }
 struct Choice {
 	Source source{Source::NONE};

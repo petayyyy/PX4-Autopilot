@@ -43,6 +43,7 @@
 #include <lib/matrix/matrix/math.hpp>
 #include <lib/perf/perf_counter.h>
 #include <lib/sensor_calibration/Gyroscope.hpp>
+#include <lib/sensor_selection/RangeSensorRoles.hpp>
 #include <px4_platform_common/log.h>
 #include <px4_platform_common/module_params.h>
 #include <px4_platform_common/px4_config.h>
@@ -148,7 +149,8 @@ private:
 	bool _flow_primary_was_fresh{false};
 	hrt_abstime _flow_source_switch_logged{0};
 
-	int _distance_sensor_selected{-1}; // selected downward-facing DroneCAN rangefinder for flow scaling
+	range_sensor::Roles _range_roles{};
+	int _distance_sensor_selected{-1}; // configured short-range device accompanying flow
 	hrt_abstime _last_range_sensor_update{0};
 
 	bool _delta_angle_available{false};
@@ -177,7 +179,10 @@ private:
 		(ParamFloat<px4::params::SENS_FLOW_MAXR>) _param_sens_flow_maxr,
 		(ParamFloat<px4::params::SENS_FLOW_RATE>) _param_sens_flow_rate,
 		(ParamFloat<px4::params::SENS_FLOW_TO>) _param_sens_flow_to,
-		(ParamFloat<px4::params::EKF2_RNG_CAN_MAX>) _param_ekf2_rng_can_max
+		(ParamInt<px4::params::EKF2_RNG_S_ID>) _param_ekf2_rng_s_id,
+		(ParamInt<px4::params::EKF2_RNG_L_ID>) _param_ekf2_rng_l_id,
+		(ParamFloat<px4::params::EKF2_RNG_S_MAX>) _param_ekf2_rng_s_max,
+		(ParamFloat<px4::params::EKF2_RNG_S_TO>) _param_ekf2_rng_s_to
 	)
 };
 }; // namespace sensors

@@ -215,6 +215,18 @@ EKF2::EKF2(bool multi_mode, const px4::wq_config_t &config, bool replay_mode):
 	_param_ekf2_abl_tau(_params->acc_bias_learn_tc),
 	_param_ekf2_gyr_b_lim(_params->gyro_bias_lim)
 {
+#if defined(CONFIG_EKF2_RANGE_FINDER)
+	_range_roles = {static_cast<uint32_t>(_param_ekf2_rng_s_id.get()), static_cast<uint32_t>(_param_ekf2_rng_l_id.get())};
+
+	if (!_range_roles.valid()) {
+		PX4_ERR("range roles have the same device ID; fix EKF2_RNG_S_ID/L_ID and reboot");
+
+	} else if (!_range_roles.configured()) {
+		PX4_INFO("external range roles unassigned; configure EKF2_RNG_S_ID/L_ID and reboot");
+	}
+
+#endif // CONFIG_EKF2_RANGE_FINDER
+
 	// advertise expected minimal topic set immediately to ensure logging
 	_attitude_pub.advertise();
 	_local_position_pub.advertise();
@@ -382,6 +394,12 @@ bool EKF2::multi_init(int imu, int mag)
 
 int EKF2::print_status(bool verbose)
 {
+#if defined(CONFIG_EKF2_RANGE_FINDER)
+	PX4_INFO_RAW("range roles (startup): short=%" PRIu32 " long=%" PRIu32 ", unavailable mask=%u, instance=%d\n",
+		     _range_roles.short_id, _range_roles.long_id, _range_unavailable_mask, _distance_sensor_selected);
+	PX4_INFO_RAW("range IDs require reboot; unavailable bits: short=1 long=2 conflicting IDs=4 duplicate publishers=8\n");
+#endif // CONFIG_EKF2_RANGE_FINDER
+
 	PX4_INFO_RAW("ekf2:%d EKF dt: %.4fs, attitude: %d, local position: %d, global position: %d\n",
 		     _instance, (double)_ekf.get_dt_ekf_avg(), _ekf.attitude_valid(),
 		     _ekf.local_position_is_valid(), _ekf.global_position_is_valid());
@@ -2370,8 +2388,10 @@ bool EKF2::UpdateFlowSample(ekf2_timestamps_s &ekf2_timestamps)
 			new_optical_flow = true;
 		}
 
-		// use optical_flow distance as range sample if distance_sensor unavailable
-		if (PX4_ISFINITE(optical_flow.distance_m) && (ekf2_timestamps.timestamp > _last_range_sensor_update + 1_s)) {
+		// Embedded flow distance is only a fallback for setups without assigned
+		// range devices. It must not bypass a missing or invalid explicit role.
+		if (_range_roles.allowEmbeddedFlowRange() && PX4_ISFINITE(optical_flow.distance_m)
+		    && (ekf2_timestamps.timestamp > _last_range_sensor_update + 1_s)) {
 
 			int8_t quality = static_cast<float>(optical_flow.quality) / static_cast<float>(UINT8_MAX) * 100.f;
 
@@ -2482,10 +2502,10 @@ void EKF2::UpdateMagSample(ekf2_timestamps_s &ekf2_timestamps)
 void EKF2::UpdateRangeSample(ekf2_timestamps_s &ekf2_timestamps)
 {
 	const hrt_abstime now = ekf2_timestamps.timestamp;
-	const hrt_abstime short_timeout = (hrt_abstime)(_param_ekf2_rng_can_to.get() * 1_s);
-	const hrt_abstime mavlink_timeout = (hrt_abstime)(_param_ekf2_rng_mav_to.get() * 1_s);
-	const hrt_abstime radar_timeout = (hrt_abstime)(_param_ekf2_rng_rad_to.get() * 1_s);
+	const hrt_abstime short_timeout = (hrt_abstime)(_param_ekf2_rng_s_to.get() * 1_s);
+	const hrt_abstime long_timeout = (hrt_abstime)(_param_ekf2_rng_l_to.get() * 1_s);
 	range_selection::Candidate short_candidate{}, long_candidate{};
+	range_sensor::UniqueInstance short_match{}, long_match{};
 	distance_sensor_s short_sample{}, long_sample{};
 
 	for (unsigned i = 0; i < _distance_sensor_subs.size(); ++i) {
@@ -2494,15 +2514,11 @@ void EKF2::UpdateRangeSample(ekf2_timestamps_s &ekf2_timestamps)
 		if (!_distance_sensor_subs[i].copy(&sample)
 		    || sample.orientation != distance_sensor_s::ROTATION_DOWNWARD_FACING) { continue; }
 
-		device::Device::DeviceId id{};
-		id.devid = sample.device_id;
-		const bool is_can = id.devid_s.bus_type == device::Device::DeviceBusType_UAVCAN;
-		const bool is_radar = is_can && id.devid_s.devtype == DRV_DIST_DEVTYPE_NRA24;
-		const bool is_mavlink = id.devid_s.bus_type == device::Device::DeviceBusType_MAVLINK;
+		const auto role = _range_roles.classify(sample.device_id);
 
-		if (!is_can && !is_mavlink) { continue; }
+		if (role == range_sensor::Role::NONE) { continue; }
 
-		const hrt_abstime timeout = is_radar ? radar_timeout : (is_can ? short_timeout : mavlink_timeout);
+		const hrt_abstime timeout = role == range_sensor::Role::SHORT ? short_timeout : long_timeout;
 
 		if (!range_selection::valid(now, sample.timestamp, timeout, sample.current_distance,
 					    sample.min_distance, sample.max_distance, sample.signal_quality)) { continue; }
@@ -2512,21 +2528,35 @@ void EKF2::UpdateRangeSample(ekf2_timestamps_s &ekf2_timestamps)
 		// before choosing a source, including while the switch hold is active.
 		if (!_ekf.isRangeSampleRecent(sample.timestamp)) { continue; }
 
-		if (is_radar || is_mavlink) {
-			if (sample.current_distance <= _param_ekf2_rng_mav_max.get()
-			    && sample.timestamp > long_candidate.timestamp) {
+		if (role == range_sensor::Role::LONG) {
+			if (sample.current_distance <= _param_ekf2_rng_l_max.get()) {
+				long_match.add(i);
 				long_candidate = {int(i), sample.timestamp, sample.current_distance};
 				long_sample = sample;
 			}
 
-		} else if (sample.timestamp > short_candidate.timestamp) {
+		} else {
+			short_match.add(i);
 			short_candidate = {int(i), sample.timestamp, sample.current_distance};
 			short_sample = sample;
 		}
 	}
 
+	short_candidate.index = short_match.index();
+	long_candidate.index = long_match.index();
+	_range_unavailable_mask = (_range_roles.short_id != 0 && short_candidate.index < 0 ? 1 : 0)
+				  | (_range_roles.long_id != 0 && long_candidate.index < 0 ? 2 : 0)
+				  | (!_range_roles.valid() ? 4 : 0)
+				  | (short_match.ambiguous() || long_match.ambiguous() ? 8 : 0);
+
+	if (_range_unavailable_mask && now - _last_range_config_log > 5_s) {
+		PX4_WARN("range roles unavailable mask=%u (short=1 long=2 conflicting IDs=4 duplicate publishers=8)",
+			 _range_unavailable_mask);
+		_last_range_config_log = now;
+	}
+
 	const auto selected = _range_selector.choose(now, short_candidate, long_candidate,
-			      _param_ekf2_rng_can_max.get(), _param_ekf2_rng_can_hys.get());
+			      _param_ekf2_rng_s_max.get(), _param_ekf2_rng_hyst.get());
 
 	if (selected.index != _distance_sensor_selected || selected.source != _range_source) {
 		_distance_sensor_selected = selected.index;
@@ -2534,8 +2564,8 @@ void EKF2::UpdateRangeSample(ekf2_timestamps_s &ekf2_timestamps)
 
 		if (now - _last_range_source_log >= 1_s) {
 			PX4_INFO("%d - selected %s distance_sensor:%d", _instance,
-				 selected.source == range_selection::Source::SHORT_RANGE ? "short-range CAN" :
-				 (selected.source == range_selection::Source::LONG_RANGE ? "long-range radar/MAVLink" : "none"),
+				 selected.source == range_selection::Source::SHORT_RANGE ? "short-range" :
+				 (selected.source == range_selection::Source::LONG_RANGE ? "long-range" : "none"),
 				 selected.index);
 			_last_range_source_log = now;
 		}

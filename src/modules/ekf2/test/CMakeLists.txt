@@ -54,6 +54,7 @@ px4_add_unit_gtest(SRC test_EKF_mag_declination_generated.cpp LINKLIBS ecl_EKF e
 px4_add_unit_gtest(SRC test_EKF_measurementSampling.cpp LINKLIBS ecl_EKF ecl_sensor_sim)
 px4_add_unit_gtest(SRC test_EKF_ringbuffer.cpp LINKLIBS ecl_EKF ecl_sensor_sim)
 px4_add_unit_gtest(SRC test_range_source_timing.cpp LINKLIBS ecl_EKF)
+px4_add_unit_gtest(SRC test_range_sensor_roles.cpp)
 px4_add_unit_gtest(SRC test_EKF_terrain_estimator.cpp LINKLIBS ecl_EKF ecl_sensor_sim ecl_test_helper)
 px4_add_unit_gtest(SRC test_EKF_utils.cpp LINKLIBS ecl_EKF ecl_sensor_sim)
 px4_add_unit_gtest(SRC test_EKF_withReplayData.cpp LINKLIBS ecl_EKF ecl_sensor_sim)
