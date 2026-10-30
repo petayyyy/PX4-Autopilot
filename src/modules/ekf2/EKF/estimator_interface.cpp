@@ -266,6 +266,20 @@ void EstimatorInterface::setAirspeedData(const airspeedSample &airspeed_sample)
 #endif // CONFIG_EKF2_AIRSPEED
 
 #if defined(CONFIG_EKF2_RANGE_FINDER)
+int64_t EstimatorInterface::rangeSampleTimeUs(uint64_t timestamp) const
+{
+	return static_cast<int64_t>(timestamp)
+	       - static_cast<int64_t>(_params.range_delay_ms * 1000)
+	       - static_cast<int64_t>(_dt_ekf_avg * 5e5f); // seconds to microseconds divided by 2
+}
+
+bool EstimatorInterface::isRangeSampleRecent(uint64_t timestamp) const
+{
+	const int64_t adjusted_time_us = rangeSampleTimeUs(timestamp);
+	return adjusted_time_us > 0
+	       && RingBuffer<rangeSample>::is_sample_recent(_time_delayed_us, static_cast<uint64_t>(adjusted_time_us));
+}
+
 void EstimatorInterface::setRangeData(const rangeSample &range_sample)
 {
 	if (!_initialised) {
@@ -284,9 +298,7 @@ void EstimatorInterface::setRangeData(const rangeSample &range_sample)
 		}
 	}
 
-	const int64_t time_us = range_sample.time_us
-				- static_cast<int64_t>(_params.range_delay_ms * 1000)
-				- static_cast<int64_t>(_dt_ekf_avg * 5e5f); // seconds to microseconds divided by 2
+	const int64_t time_us = rangeSampleTimeUs(range_sample.time_us);
 
 	// limit data rate to prevent data being lost
 	if (time_us >= static_cast<int64_t>(_range_buffer->get_newest().time_us + _min_obs_interval_us)) {

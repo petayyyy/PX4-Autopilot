@@ -2507,6 +2507,11 @@ void EKF2::UpdateRangeSample(ekf2_timestamps_s &ekf2_timestamps)
 		if (!range_selection::valid(now, sample.timestamp, timeout, sample.current_distance,
 					    sample.min_distance, sample.max_distance, sample.signal_quality)) { continue; }
 
+		// Configured source freshness may outlast the EKF buffer's input window.
+		// Check the adjusted measurement time against the current fusion horizon
+		// before choosing a source, including while the switch hold is active.
+		if (!_ekf.isRangeSampleRecent(sample.timestamp)) { continue; }
+
 		if (is_radar || is_mavlink) {
 			if (sample.current_distance <= _param_ekf2_rng_mav_max.get()
 			    && sample.timestamp > long_candidate.timestamp) {

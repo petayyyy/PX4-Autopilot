@@ -109,6 +109,9 @@ public:
 #if defined(CONFIG_EKF2_RANGE_FINDER)
 	void setRangeData(const rangeSample &range_sample);
 
+	// Timing eligibility only: this does not guarantee buffering or fusion.
+	bool isRangeSampleRecent(uint64_t timestamp) const;
+
 	// set sensor limitations reported by the rangefinder
 	void set_rangefinder_limits(float min_distance, float max_distance)
 	{
@@ -357,6 +360,7 @@ protected:
 
 #if defined(CONFIG_EKF2_RANGE_FINDER)
 	RingBuffer<rangeSample> *_range_buffer{nullptr};
+	int64_t rangeSampleTimeUs(uint64_t timestamp) const;
 	uint64_t _time_last_range_buffer_push{0};
 
 	sensor::SensorRangeFinder _range_sensor{};

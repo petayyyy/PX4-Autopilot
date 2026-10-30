@@ -117,6 +117,13 @@ public:
 
 	uint8_t get_oldest_index() const { return _tail; }
 
+	// Future samples can wait for the fusion horizon. Samples at least 100 ms
+	// behind it can no longer be retrieved by pop_first_older_than().
+	static bool is_sample_recent(uint64_t timestamp, uint64_t sample_timestamp)
+	{
+		return sample_timestamp > timestamp || timestamp - sample_timestamp < 100000;
+	}
+
 	bool pop_first_older_than(const uint64_t &timestamp, data_type *sample)
 	{
 		// start looking from newest observation data
@@ -124,7 +131,7 @@ public:
 			int index = (_head - i);
 			index = index < 0 ? _size + index : index;
 
-			if (timestamp >= _buffer[index].time_us && timestamp < _buffer[index].time_us + (uint64_t)1e5) {
+			if (timestamp >= _buffer[index].time_us && is_sample_recent(timestamp, _buffer[index].time_us)) {
 				*sample = _buffer[index];
 
 				// Now we can set the tail to the item which
