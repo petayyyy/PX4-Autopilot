@@ -47,8 +47,8 @@ parameter; the migration tool performs this conversion.
 | `EKF2_RNG_L_TO` | Long-range sample freshness limit | 0.3 s |
 
 The distance and freshness settings can update during operation. Device assignments
-require reboot. The defaults are not a replacement for migrating existing values;
-for example, the previous bench setup used a 0.3 s short-range freshness limit.
+require reboot. Migrate existing distance and freshness settings explicitly rather
+than assuming the defaults match the installation.
 
 All existing selection rules still apply: downward orientation, valid measurement
 and limits, nonzero signal quality, configured freshness, and the adjusted sample
@@ -136,6 +136,9 @@ neither is usable, selection is NONE; driver and estimator health checks continu
 to operate normally.
 
 ## Code and checks
+
+See [recorded SITL and hardware bench validation](RangeSensorValidation.md) for
+test conditions, results, and validation limits.
 
 - [Shared role matching and validity](../../lib/sensor_selection/RangeSensorRoles.hpp)
 - [Selection state machine](RangeSourceSelection.hpp)
