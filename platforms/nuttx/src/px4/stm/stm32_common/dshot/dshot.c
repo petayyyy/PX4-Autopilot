@@ -548,18 +548,16 @@ void dma_burst_finished_callback(DMA_HANDLE handle, uint8_t status, void *arg)
 	up_clean_dcache((uintptr_t) dshot_capture_buffer[timer_index],
 			(uintptr_t) dshot_capture_buffer[timer_index] + DSHOT_CAPTURE_BUFFER_SIZE(MAX_NUM_CHANNELS_PER_TIMER));
 
-	// Select the next capture channel first, then switch exactly that channel to CaptureDMA.
-	// io_timer_channel_init() fully rewrites the channel's CCMR bits; if this is done for the previous
-	// channel instead, the channel we actually capture on keeps its PWM output config (OCxM/OCxPE),
-	// which in input mode reads as input filter/prescaler (ICxF/ICxPSC) and corrupts the edge timings.
-	select_next_capture_channel(timer_index);
-
+	// Re-initialize the current capture channel back to CaptureDMA
 	uint8_t capture_output_channel = output_channel_from_timer_channel(timer_index, timer_configs[timer_index].capture_channel);
 
 	if (capture_output_channel < MAX_TIMER_IO_CHANNELS) {
 		io_timer_unallocate_channel(capture_output_channel);
 		io_timer_channel_init(capture_output_channel, IOTimerChanMode_CaptureDMA, NULL, NULL);
 	}
+
+	// Select the next capture channel
+	select_next_capture_channel(timer_index);
 
 	// Allocate DMA for currently selected capture_channel
 	uint8_t capture_channel = timer_configs[timer_index].capture_channel;
