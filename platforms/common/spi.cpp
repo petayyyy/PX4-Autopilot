@@ -87,8 +87,11 @@ const px4_spi_bus_t *px4_spi_buses{nullptr};
 
 int px4_find_spi_bus(uint32_t devid)
 {
-	for (int i = 0; ((px4_spi_bus_t *) px4_spi_buses) != nullptr && i < SPI_BUS_MAX_BUS_ITEMS; ++i) {
-		const px4_spi_bus_t &bus_data = px4_spi_buses[i];
+	// go through a pointer: px4_spi_buses is an array on boards without HW versioning (-Waddress)
+	const px4_spi_bus_t *buses = px4_spi_buses;
+
+	for (int i = 0; buses != nullptr && i < SPI_BUS_MAX_BUS_ITEMS; ++i) {
+		const px4_spi_bus_t &bus_data = buses[i];
 
 		if (bus_data.bus == -1) {
 			break;
