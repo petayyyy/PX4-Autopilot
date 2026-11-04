@@ -241,7 +241,7 @@ uint8_t DShotTelemetry::crc8(const uint8_t *buf, uint8_t len)
 void DShotTelemetry::requestNextMotor()
 {
 	if (_num_motors <= 0) {
-		// no motors assigned to this bus (e.g. DSHOT_TEL_SPLIT points elsewhere): nothing to poll
+		// no motors configured: nothing to poll
 		_current_motor_index_request = -1;
 		_current_request_start = 0;
 		_frame_position = 0;
