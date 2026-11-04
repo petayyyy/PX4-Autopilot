@@ -139,5 +139,6 @@ private:
 
 	// statistics
 	int _num_timeouts{0};
+	int _num_zero_frames{0};
 	int _num_successful_responses{0};
 };

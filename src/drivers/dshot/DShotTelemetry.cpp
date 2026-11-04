@@ -80,6 +80,8 @@ int DShotTelemetry::redirectOutput(OutputBuffer &buffer)
 		return -EBUSY;
 	}
 
+	tcflush(_uart_fd, TCIFLUSH);
+
 	_current_motor_index_request = buffer.motor_index;
 	_current_request_start = hrt_absolute_time();
 	_redirect_output = &buffer;
@@ -171,7 +173,21 @@ bool DShotTelemetry::decodeByte(uint8_t byte, bool &successful_decoding)
 		uint8_t checksum = crc8(_frame_buffer, ESC_FRAME_SIZE - 1);
 		uint8_t checksum_data = _frame_buffer[ESC_FRAME_SIZE - 1];
 
-		if (checksum == checksum_data) {
+		// An all-zero frame passes the CRC8 check (crc8 of zeros is 0), but no real ESC sends one
+		// (temperature/voltage are never 0). It's what a low/noisy RX line produces, so reject it.
+		bool all_zero = true;
+
+		for (int i = 0; i < ESC_FRAME_SIZE; ++i) {
+			if (_frame_buffer[i] != 0) {
+				all_zero = false;
+				break;
+			}
+		}
+
+		if (all_zero) {
+			++_num_zero_frames;
+
+		} else if (checksum == checksum_data) {
 			_latest_data.time = hrt_absolute_time();
 			_latest_data.temperature = _frame_buffer[0];
 			_latest_data.voltage = (_frame_buffer[1] << 8) | _frame_buffer[2];
@@ -195,6 +211,7 @@ void DShotTelemetry::printStatus() const
 {
 	PX4_INFO("Number of successful ESC frames: %i", _num_successful_responses);
 	PX4_INFO("Number of timeouts: %i", _num_timeouts);
+	PX4_INFO("Number of rejected all-zero frames: %i", _num_zero_frames);
 }
 
 uint8_t DShotTelemetry::updateCrc8(uint8_t crc, uint8_t crc_seed)
@@ -246,6 +263,11 @@ int DShotTelemetry::getRequestMotorIndex()
 		// already in progress, do not send another request
 		return -1;
 	}
+
+	// drop bytes received since the last request (line noise, late responses) so they don't end up
+	// at the start of the next frame
+	tcflush(_uart_fd, TCIFLUSH);
+	_frame_position = 0;
 
 	_current_request_start = hrt_absolute_time();
 	return _current_motor_index_request;

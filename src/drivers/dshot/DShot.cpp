@@ -440,7 +440,9 @@ bool DShot::updateOutputs(bool stop_motors, uint16_t outputs[MAX_ACTUATORS],
 			int global_index = request_esc_info();
 			requested_telemetry_index[_esc_info_bus] = global_index;
 
-		} else {
+		} else if (_request_esc_info.load() == nullptr) {
+			// Only poll regular telemetry when no ESC info request is pending: otherwise the buses never
+			// go idle at the same time (they poll out of phase) and the request above would never be sent.
 			for (int bus = 0; bus < NUM_TELEMETRY_BUSSES; ++bus) {
 				if (_telemetry[bus]) {
 					int local_index = _telemetry[bus]->handler.getRequestMotorIndex();
