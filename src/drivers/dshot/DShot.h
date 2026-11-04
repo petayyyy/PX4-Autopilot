@@ -138,6 +138,8 @@ private:
 
 	void maybe_publish_esc_status();
 
+	void process_bdshot_telemetry();
+
 	int request_esc_info();
 
 	void Run() override;
@@ -150,6 +152,7 @@ private:
 
 	MixingOutput _mixing_output{PARAM_PREFIX, DIRECT_PWM_OUTPUT_CHANNELS, *this, MixingOutput::SchedulingPolicy::Auto, false, false};
 	uint32_t _reversible_outputs{};
+	uint32_t _bdshot_output_mask{0}; ///< outputs running bidirectional DShot (eRPM on the signal line)
 
 	Telemetry *_telemetry[NUM_TELEMETRY_BUSSES] {nullptr, nullptr};
 	uORB::PublicationMultiData<esc_status_s> _esc_status_pub{ORB_ID(esc_status)};

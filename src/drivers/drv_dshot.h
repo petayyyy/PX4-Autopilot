@@ -88,15 +88,18 @@ typedef enum {
  * @param channel_mask		Bitmask of channels (LSB = channel 0) to enable.
  *				This allows some of the channels to remain configured
  *				as GPIOs or as another function. Already used channels/timers will not be configured as DShot
+ * @param bdshot_channel_mask	Bitmask of channels to run in bidirectional mode (eRPM read back on the signal line)
  * @param dshot_pwm_freq	Frequency of DSHOT signal. Usually DSHOT150, DSHOT300, DSHOT600 or DSHOT1200
+ * @param edt_enable		Enable Extended DShot Telemetry decoding
  * @return <0 on error, the initialized channels mask.
  */
-__EXPORT extern int up_dshot_init(uint32_t channel_mask, unsigned dshot_pwm_freq);
+__EXPORT extern int up_dshot_init(uint32_t channel_mask, uint32_t bdshot_channel_mask, unsigned dshot_pwm_freq,
+				  bool edt_enable);
 
 /**
  * Set Dshot motor data, used by up_dshot_motor_data_set() and up_dshot_motor_command() (internal method)
  */
-__EXPORT extern void dshot_motor_data_set(unsigned motor_number, uint16_t throttle, bool telemetry);
+__EXPORT extern void dshot_motor_data_set(uint8_t channel, uint16_t throttle, bool telemetry);
 
 /**
  * Set the current dshot throttle value for a channel (motor).
@@ -105,7 +108,7 @@ __EXPORT extern void dshot_motor_data_set(unsigned motor_number, uint16_t thrott
  * @param throttle	The output dshot throttle value in [0 = DSHOT_DISARM_VALUE, 1 = DSHOT_MIN_THROTTLE, 1999 = DSHOT_MAX_THROTTLE].
  * @param telemetry	If true, request telemetry from that motor
  */
-static inline void up_dshot_motor_data_set(unsigned channel, uint16_t throttle, bool telemetry)
+static inline void up_dshot_motor_data_set(uint8_t channel, uint16_t throttle, bool telemetry)
 {
 	dshot_motor_data_set(channel, throttle + DShot_cmd_MIN_throttle, telemetry);
 }
@@ -136,5 +139,52 @@ __EXPORT extern void up_dshot_trigger(void);
  *			are disarmed.
  */
 __EXPORT extern int up_dshot_arm(bool armed);
+
+// Names used by the bidirectional DShot platform layer (ported from upstream main)
+enum {
+	DSHOT_CMD_MOTOR_STOP = DShot_cmd_motor_stop,
+	DSHOT_CMD_MIN_THROTTLE = DShot_cmd_MIN_throttle,
+};
+
+// Extended DShot Telemetry types
+enum {
+	DSHOT_EDT_ERPM = 0x00,
+	DSHOT_EDT_TEMPERATURE = 0x02, // C
+	DSHOT_EDT_VOLTAGE = 0x04, // 0.25V per step
+	DSHOT_EDT_CURRENT = 0x06, // A
+	DSHOT_EDT_DEBUG1 = 0x08,
+	DSHOT_EDT_DEBUG2 = 0x0A,
+	DSHOT_EDT_DEBUG3 = 0x0C,
+	DSHOT_EDT_STATE_EVENT = 0x0E,
+};
+
+struct BDShotTelemetry {
+	int type;
+	int32_t value;
+};
+
+/** Print bidirectional DShot status */
+__EXPORT extern void up_bdshot_status(void);
+
+/** Bitmask of channels with a new eRPM sample since the last read */
+__EXPORT extern uint16_t up_bdshot_get_ready_mask(void);
+
+/** Number of decode errors on a bidirectional DShot channel */
+__EXPORT extern int up_bdshot_num_errors(uint8_t channel);
+
+/**
+ * Get the latest eRPM sample of a bidirectional DShot channel
+ * @return <0 on error / no data, 0 on success
+ */
+__EXPORT extern int up_bdshot_get_erpm(uint8_t channel, int *erpm);
+
+/** Get an Extended DShot Telemetry value of a channel */
+__EXPORT extern int up_bdshot_get_extended_telemetry(uint8_t channel, int type, uint8_t *value);
+
+/** Returns 1 if the channel has recently returned valid eRPM data */
+__EXPORT extern int up_bdshot_channel_online(uint8_t channel);
+
+/** Returns 1 if the channel supports capturing the bidirectional response */
+__EXPORT extern int up_bdshot_channel_capture_supported(uint8_t channel);
 
 __END_DECLS

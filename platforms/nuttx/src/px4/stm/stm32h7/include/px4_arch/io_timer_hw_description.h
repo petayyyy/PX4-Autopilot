@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2019 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2024 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -93,29 +93,27 @@ static inline constexpr timer_io_channels_t initIOTimerChannel(const io_timers_t
 {
 	timer_io_channels_t ret = initIOTimerGPIOInOut(timer, pin);
 
+	ret.timer_channel = (uint8_t)timer.channel;
+
 	switch (timer.channel) {
 	case Timer::Channel1:
 		ret.ccr_offset = STM32_GTIM_CCR1_OFFSET;
 		ret.masks = GTIM_SR_CC1IF | GTIM_SR_CC1OF;
-		ret.timer_channel = 1;
 		break;
 
 	case Timer::Channel2:
 		ret.ccr_offset = STM32_GTIM_CCR2_OFFSET;
 		ret.masks = GTIM_SR_CC2IF | GTIM_SR_CC2OF;
-		ret.timer_channel = 2;
 		break;
 
 	case Timer::Channel3:
 		ret.ccr_offset = STM32_GTIM_CCR3_OFFSET;
 		ret.masks = GTIM_SR_CC3IF | GTIM_SR_CC3OF;
-		ret.timer_channel = 3;
 		break;
 
 	case Timer::Channel4:
 		ret.ccr_offset = STM32_GTIM_CCR4_OFFSET;
 		ret.masks = GTIM_SR_CC4IF | GTIM_SR_CC4OF;
-		ret.timer_channel = 4;
 		break;
 	}
 
@@ -135,7 +133,7 @@ static inline constexpr timer_io_channels_t initIOTimerChannel(const io_timers_t
 	return ret;
 }
 
-static inline constexpr io_timers_t initIOTimer(Timer::Timer timer, DMA dshot_dma = {})
+static inline constexpr io_timers_t initIOTimer(Timer::Timer timer, DMA dma = {})
 {
 	bool nuttx_config_timer_enabled = false;
 	io_timers_t ret{};
@@ -306,9 +304,10 @@ static inline constexpr io_timers_t initIOTimer(Timer::Timer timer, DMA dshot_dm
 	constexpr_assert(!nuttx_config_timer_enabled, "IO Timer requires NuttX timer config to be disabled (STM32_TIMx)");
 
 	// DShot
-	if (dshot_dma.index != DMA::Invalid) {
-		ret.dshot.dma_base = getDMABaseRegister(dshot_dma);
-		ret.dshot.dmamap = getTimerUpdateDMAMap(timer, dshot_dma);
+	if (dma.index != DMA::Invalid) {
+		ret.dshot.dma_base = getDMABaseRegister(dma);
+		ret.dshot.dma_map_up = getTimerUpdateDMAMap(timer, dma);
+		getTimerChannelDMAMap(timer, dma, ret.dshot.dma_map_ch);
 	}
 
 	return ret;

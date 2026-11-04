@@ -101,6 +101,7 @@ void DShot::enable_dshot_outputs(const bool enabled)
 	if (enabled && !_outputs_initialized) {
 		unsigned int dshot_frequency = 0;
 		uint32_t dshot_frequency_param = 0;
+		uint32_t bdshot_channels = 0;
 
 		for (int timer = 0; timer < MAX_IO_TIMERS; ++timer) {
 			uint32_t channels = io_timer_get_group(timer);
@@ -129,6 +130,18 @@ void DShot::enable_dshot_outputs(const bool enabled)
 			} else if (tim_config == -2) {
 				dshot_frequency_request = DSHOT1200;
 
+			} else if (tim_config == -6) {
+				dshot_frequency_request = DSHOT600;
+				bdshot_channels |= channels;
+
+			} else if (tim_config == -7) {
+				dshot_frequency_request = DSHOT300;
+				bdshot_channels |= channels;
+
+			} else if (tim_config == -8) {
+				dshot_frequency_request = DSHOT150;
+				bdshot_channels |= channels;
+
 			} else {
 				_output_mask &= ~channels; // don't use for dshot
 			}
@@ -145,7 +158,9 @@ void DShot::enable_dshot_outputs(const bool enabled)
 			}
 		}
 
-		int ret = up_dshot_init(_output_mask, dshot_frequency);
+		_bdshot_output_mask = bdshot_channels & _output_mask;
+
+		int ret = up_dshot_init(_output_mask, _bdshot_output_mask, dshot_frequency, false);
 
 		if (ret < 0) {
 			PX4_ERR("up_dshot_init failed (%i)", ret);
@@ -153,6 +168,11 @@ void DShot::enable_dshot_outputs(const bool enabled)
 		}
 
 		_output_mask = ret;
+		_bdshot_output_mask &= _output_mask;
+
+		if (_bdshot_output_mask) {
+			_esc_status_pub.advertise();
+		}
 
 		// disable unused functions
 		for (unsigned i = 0; i < _num_outputs; ++i) {
@@ -178,10 +198,6 @@ void DShot::enable_dshot_outputs(const bool enabled)
 
 void DShot::update_telemetry_num_motors()
 {
-	if (!_telemetry[0] && !_telemetry[1]) {
-		return;
-	}
-
 	int motor_count = 0;
 
 	for (unsigned i = 0; i < _num_outputs; ++i) {
@@ -192,6 +208,10 @@ void DShot::update_telemetry_num_motors()
 
 			++motor_count;
 		}
+	}
+
+	if (!_telemetry[0] && !_telemetry[1]) {
+		return;
 	}
 
 	// DSHOT_TEL_SPLIT is a 1-based motor index in the same (configured-output) space as motor_count.
@@ -544,6 +564,58 @@ bool DShot::updateOutputs(bool stop_motors, uint16_t outputs[MAX_ACTUATORS],
 	return true;
 }
 
+void DShot::process_bdshot_telemetry()
+{
+	if (!_bdshot_output_mask || !_outputs_on) {
+		return;
+	}
+
+	// wait until every bidirectional channel captured a new response
+	if ((up_bdshot_get_ready_mask() & _bdshot_output_mask) != _bdshot_output_mask) {
+		return;
+	}
+
+	esc_status_s &esc_status = _esc_status_pub.get();
+	const hrt_abstime now = hrt_absolute_time();
+	const int pole_pairs = math::max(static_cast<int>(_param_mot_pole_count.get()) / 2, 1);
+	int esc_index = 0; // same indexing as the UART telemetry: configured outputs in output order
+
+	for (unsigned output = 0; output < _num_outputs; ++output) {
+		if (!_mixing_output.isFunctionSet(output)) {
+			continue;
+		}
+
+		if ((_bdshot_output_mask & (1u << output)) && esc_index < esc_status_s::CONNECTED_ESC_MAX) {
+			esc_report_s &esc = esc_status.esc[esc_index];
+			esc.actuator_function = _actuator_functions[esc_index];
+			esc.esc_errorcount = up_bdshot_num_errors(output);
+
+			int erpm = 0;
+
+			if (up_bdshot_channel_online(output) && up_bdshot_get_erpm(output, &erpm) == PX4_OK) {
+				esc.timestamp = now;
+				esc.esc_rpm = (erpm * 100) / pole_pairs;
+				esc_status.esc_online_flags |= (1u << esc_index);
+
+			} else {
+				esc_status.esc_online_flags &= ~(1u << esc_index);
+			}
+		}
+
+		++esc_index;
+	}
+
+	// With UART telemetry active, the merged message is published from maybe_publish_esc_status().
+	if (!_telemetry[0] && !_telemetry[1]) {
+		esc_status.timestamp = now;
+		esc_status.esc_connectiontype = esc_status_s::ESC_CONNECTION_TYPE_DSHOT;
+		esc_status.esc_count = esc_index;
+		esc_status.esc_armed_flags = (1u << esc_index) - 1;
+		++esc_status.counter;
+		_esc_status_pub.update();
+	}
+}
+
 void DShot::Run()
 {
 	if (should_exit()) {
@@ -564,6 +636,8 @@ void DShot::Run()
 	if (_outputs_on != outputs_on) {
 		enable_dshot_outputs(outputs_on);
 	}
+
+	process_bdshot_telemetry();
 
 	for (int bus = 0; bus < NUM_TELEMETRY_BUSSES; ++bus) {
 		if (!_telemetry[bus]) {
@@ -829,6 +903,11 @@ int DShot::print_status()
 	PX4_INFO("Outputs on: %s", _outputs_on ? "yes" : "no");
 	perf_print_counter(_cycle_perf);
 	_mixing_output.printStatus();
+
+	if (_bdshot_output_mask) {
+		PX4_INFO("bidirectional DShot outputs: 0x%" PRIx32, _bdshot_output_mask);
+		up_bdshot_status();
+	}
 
 	for (int bus = 0; bus < NUM_TELEMETRY_BUSSES; ++bus) {
 		if (_telemetry[bus]) {
