@@ -51,8 +51,6 @@
 
 // DShot protocol definitions
 #define ONE_MOTOR_DATA_SIZE         16u
-#define MOTOR_PWM_BIT_1             14u
-#define MOTOR_PWM_BIT_0             7u
 #define DSHOT_THROTTLE_POSITION     5u
 #define DSHOT_TELEMETRY_POSITION    4u
 #define NIBBLES_SIZE                4u
@@ -119,11 +117,14 @@ static uint32_t *dshot_output_buffer[MAX_IO_TIMERS] = {};
 static uint16_t dshot_capture_buffer[MAX_IO_TIMERS][MAX_NUM_CHANNELS_PER_TIMER][CHANNEL_CAPTURE_BUFF_SIZE]
 px4_cache_aligned_data() = {};
 
+// Invalid symbols decode above the 16-bit frame, so they fail validation instead of aliasing a 0x0 nibble
+#define GCR_INVALID 0x10000u
+
 static const uint32_t gcr_decode[32] = {
-	0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-	0x0, 0x9, 0xA, 0xB, 0x0, 0xD, 0xE, 0xF,
-	0x0, 0x0, 0x2, 0x3, 0x0, 0x5, 0x6, 0x7,
-	0x0, 0x0, 0x8, 0x1, 0x0, 0x4, 0xC, 0x0
+	GCR_INVALID, GCR_INVALID, GCR_INVALID, GCR_INVALID, GCR_INVALID, GCR_INVALID, GCR_INVALID, GCR_INVALID,
+	GCR_INVALID, 0x9, 0xA, 0xB, GCR_INVALID, 0xD, 0xE, 0xF,
+	GCR_INVALID, GCR_INVALID, 0x2, 0x3, GCR_INVALID, 0x5, 0x6, 0x7,
+	GCR_INVALID, 0x0, 0x8, 0x1, GCR_INVALID, 0x4, 0xC, GCR_INVALID
 };
 
 // Indicates when the bdshot capture cycle is finished. This is necessary since the captured data is
@@ -676,7 +677,7 @@ void process_capture_results(uint8_t timer_index, uint8_t channel_index)
 	checksum = checksum ^ (checksum >> 8);
 	checksum = checksum ^ (checksum >> NIBBLES_SIZE);
 
-	if ((checksum & 0xF) != 0xF) {
+	if (payload > 0xFFFF || (checksum & 0xF) != 0xF) {
 		++read_fail_crc[output_channel];
 
 		if (_consecutive_failures[output_channel]++ > BDSHOT_OFFLINE_COUNT) {
@@ -952,9 +953,13 @@ void dshot_motor_data_set(uint8_t channel, uint16_t data, bool telemetry)
 	uint8_t num_motors = mapping->channel_count_including_gaps;
 	uint8_t timer_channel = timer_io_channels[channel].timer_channel - mapping->lowest_timer_channel;
 
+	// The high times are compare counts, so they follow whatever tick count this timer's
+	// clock and the requested rate settled on in io_timer_set_dshot_burst_mode().
+	const dshot_timing_t *timing = io_timer_get_dshot_timing(timer_index, _dshot_frequency);
+
 	for (uint8_t motor_data_index = 0; motor_data_index < ONE_MOTOR_DATA_SIZE; motor_data_index++) {
 		dshot_output_buffer[timer_index][motor_data_index * num_motors + timer_channel] =
-			(packet & 0x8000) ? MOTOR_PWM_BIT_1 : MOTOR_PWM_BIT_0;  // MSB first
+			(packet & 0x8000) ? timing->bit_1 : timing->bit_0;  // MSB first
 		packet <<= 1;
 	}
 }
